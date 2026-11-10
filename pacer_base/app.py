@@ -9,9 +9,9 @@
 import contextlib
 import logging
 from datetime import datetime
-from typing import Annotated, AsyncIterator
+from typing import Annotated, Any, AsyncIterator
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
@@ -20,7 +20,17 @@ from .auth import Authenticator, MCPAuth, Principal, bearer
 from .config import Settings
 from .db import Database
 from .mcp_server import build_mcp
-from .models import PROFILE_SECTIONS, ClientIn, ClientUpdate, EntryIn, ProfileUpdate, TokenIn
+from .models import (
+    PROFILE_SECTIONS,
+    ClientIn,
+    ClientUpdate,
+    DecisionIn,
+    EntryIn,
+    ProfileUpdate,
+    ProposalIn,
+    SourcesIn,
+    TokenIn,
+)
 
 log = logging.getLogger("pacer_base")
 
@@ -59,14 +69,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def need(scope: str):
         async def dep(who: Annotated[Principal, Depends(principal)]) -> Principal:
             if not who.has(scope):
-                raise HTTPException(403, f"This token is {who.scope}-only; {scope} access is needed")
+                raise HTTPException(403, f"This token has {who.scope} access; {scope} access is needed")
             return who
 
         return dep
 
     Reader = Annotated[Principal, Depends(need("read"))]
     Writer = Annotated[Principal, Depends(need("write"))]
+    Approver = Annotated[Principal, Depends(need("approve"))]
     Admin = Annotated[Principal, Depends(need("admin"))]
+
+    async def entry_cap(who: Principal) -> int | None:
+        return None if who.has("admin") else (await store.get_settings(db))["daily_entry_cap"]
 
     async def client_or_404(ref: str, who: Principal, write: bool = False, include_archived: bool = False) -> dict:
         try:
@@ -124,14 +138,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/clients/{client}/context")
     async def context(client: str, who: Reader, recent: Annotated[int, Query(ge=0, le=50)] = 12) -> dict:
         c = await client_or_404(client, who)
+        cfg = await store.get_settings(db)
         async with db.client(c["db_name"]) as conn:
+            await store.expire_proposals(conn, cfg["proposal_expiry_days"])
             profile = await store.get_profile(conn)
             entries = await store.list_entries(conn, limit=recent) if recent else []
             s = await store.stats(conn)
+            sources = await store.list_sources(conn)
+            pending = await store.list_proposals(conn, "pending")
         return {
             "client": store.jsonable({k: v for k, v in c.items() if k != "db_name"}),
-            "markdown": render.client_context(c, profile, entries, s),
+            "markdown": render.client_context(c, profile, entries, s, sources, pending),
             "profile": {k: store.jsonable(v) for k, v in profile.items()},
+            "pending_proposals": [store.jsonable(p) for p in pending],
+            "sources": [store.jsonable(x) for x in sources],
             "recent": [store.jsonable(e) for e in entries],
             "stats": store.jsonable(s),
         }
@@ -145,7 +165,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {k: store.jsonable(profile[k]) if k in profile else None for k in PROFILE_SECTIONS}
 
     @app.put("/api/clients/{client}/profile/{section}")
-    async def put_profile(client: str, section: str, body: ProfileUpdate, who: Writer) -> dict:
+    async def put_profile(client: str, section: str, body: ProfileUpdate, who: Approver) -> dict:
+        """Directly replace a section (approvers). Others POST a proposal instead."""
         c = await client_or_404(client, who, write=True)
         try:
             async with db.client(c["db_name"]) as conn:
@@ -190,7 +211,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         c = await client_or_404(client, who, write=True)
         try:
             async with db.client(c["db_name"]) as conn:
-                row, action = await store.save_entry(conn, body, who.label)
+                row, action = await store.save_entry(conn, body, who.label, daily_cap=await entry_cap(who))
         except (ValueError, store.Conflict) as exc:
             raise HTTPException(422, str(exc)) from exc
         return JSONResponse({"action": action, "entry": store.jsonable(row)}, status_code=201 if action == "created" else 200)
@@ -209,7 +230,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         c = await client_or_404(client, who, write=True)
         try:
             async with db.client(c["db_name"]) as conn:
-                row, _ = await store.save_entry(conn, body, who.label, entry_id=entry_id)
+                row, _ = await store.save_entry(conn, body, who.label, entry_id=entry_id, daily_cap=await entry_cap(who))
         except store.NotFound as exc:
             raise HTTPException(404, str(exc)) from exc
         except (ValueError, store.Conflict) as exc:
@@ -224,6 +245,86 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return store.jsonable(await store.archive_entry(conn, entry_id, who.label))
         except store.NotFound as exc:
             raise HTTPException(404, str(exc)) from exc
+
+    # -- sources (where the round-up may read) -----------------------------
+    @app.get("/api/clients/{client}/sources")
+    async def get_sources(client: str, who: Reader) -> list[dict]:
+        c = await client_or_404(client, who)
+        async with db.client(c["db_name"]) as conn:
+            return [store.jsonable(x) for x in await store.list_sources(conn)]
+
+    @app.put("/api/clients/{client}/sources")
+    async def put_sources(client: str, body: SourcesIn, who: Admin) -> list[dict]:
+        """Replace the client's full list of sources (admin only)."""
+        c = await client_or_404(client, who)
+        try:
+            async with db.client(c["db_name"]) as conn:
+                rows = await store.replace_sources(conn, body.sources)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return [store.jsonable(x) for x in rows]
+
+    # -- proposals ---------------------------------------------------------
+    @app.get("/api/clients/{client}/proposals")
+    async def get_proposals(client: str, who: Reader, status: str | None = "pending", limit: int = 50) -> list[dict]:
+        c = await client_or_404(client, who)
+        cfg = await store.get_settings(db)
+        async with db.client(c["db_name"]) as conn:
+            await store.expire_proposals(conn, cfg["proposal_expiry_days"])
+            rows = await store.list_proposals(conn, None if status in (None, "", "all") else status, limit)
+        return [store.jsonable(r) for r in rows]
+
+    @app.post("/api/clients/{client}/proposals", status_code=201)
+    async def post_proposal(client: str, body: ProposalIn, who: Writer) -> dict:
+        c = await client_or_404(client, who, write=True)
+        try:
+            async with db.client(c["db_name"]) as conn:
+                row, replaced = await store.propose_change(conn, body, who.label)
+        except store.Conflict as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {"proposal": store.jsonable(row), "replaced": replaced}
+
+    @app.post("/api/clients/{client}/proposals/{proposal_id}/decision")
+    async def decide(client: str, proposal_id: int, body: DecisionIn, who: Approver) -> dict:
+        c = await client_or_404(client, who, write=True)
+        cfg = await store.get_settings(db)
+        try:
+            async with db.client(c["db_name"]) as conn:
+                await store.expire_proposals(conn, cfg["proposal_expiry_days"])
+                row = await store.decide_proposal(conn, proposal_id, body, who.label, cfg["approvers"])
+        except store.NotFound as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except store.Forbidden as exc:
+            raise HTTPException(403, str(exc)) from exc
+        except store.Conflict as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return store.jsonable(row)
+
+    @app.post("/api/clients/{client}/proposals/{proposal_id}/review")
+    async def review_ref(client: str, proposal_id: int, who: Writer, channel: str = Body(), ts: str = Body()) -> dict:
+        c = await client_or_404(client, who, write=True)
+        try:
+            async with db.client(c["db_name"]) as conn:
+                return store.jsonable(await store.attach_review(conn, proposal_id, channel, ts))
+        except store.NotFound as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    # -- agency-wide settings -----------------------------------------------
+    @app.get("/api/settings")
+    async def get_settings_(_: Reader) -> dict:
+        return await store.get_settings(db)
+
+    @app.put("/api/settings/{key}")
+    async def put_setting(key: str, who: Admin, value: Any = Body(embed=True)) -> dict:
+        try:
+            clean = await store.set_setting(db, key, value, who.label)
+        except ValidationError as exc:
+            raise HTTPException(422, exc.errors(include_url=False, include_context=False)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {key: clean}
 
     # -- tokens -----------------------------------------------------------
     @app.get("/api/tokens")

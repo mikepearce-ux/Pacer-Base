@@ -10,8 +10,21 @@ from typing import Any, Iterable
 import psycopg
 from psycopg.types.json import Jsonb
 
+from pydantic import TypeAdapter
+
 from .db import Database, client_db_name
-from .models import KINDS, PROFILE_SECTIONS, ClientIn, EntryIn, slugify
+from .models import (
+    KINDS,
+    PROFILE_SECTIONS,
+    SETTING_DEFAULTS,
+    SETTING_TYPES,
+    ClientIn,
+    DecisionIn,
+    EntryIn,
+    ProposalIn,
+    SourceIn,
+    slugify,
+)
 
 
 class NotFound(LookupError):
@@ -134,15 +147,54 @@ async def update_client(
 
 
 # --------------------------------------------------------------------------
+# Agency-wide settings (control database)
+# --------------------------------------------------------------------------
+
+
+async def get_settings(db: Database) -> dict[str, Any]:
+    async with db.control.connection() as conn:
+        rows = await (await conn.execute("SELECT key, value FROM settings")).fetchall()
+    out = dict(SETTING_DEFAULTS)
+    out.update({r["key"]: r["value"] for r in rows if r["key"] in SETTING_TYPES})
+    return out
+
+
+async def set_setting(db: Database, key: str, value: Any, actor: str) -> Any:
+    if key not in SETTING_TYPES:
+        raise ValueError(f"Unknown setting {key!r}. Settings: {', '.join(SETTING_TYPES)}")
+    adapter = TypeAdapter(SETTING_TYPES[key])
+    clean = adapter.dump_python(adapter.validate_python(value), mode="json")
+    if key in ("daily_entry_cap", "proposal_expiry_days") and not 1 <= clean <= 1000:
+        raise ValueError(f"{key} must be between 1 and 1000")
+    async with db.control.connection() as conn:
+        await conn.execute(
+            "INSERT INTO settings (key, value, updated_by) VALUES (%s, %s, %s)"
+            " ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = now(),"
+            " updated_by = excluded.updated_by",
+            (key, Jsonb(clean), actor),
+        )
+    return clean
+
+
+def match_approver(approvers: list[dict], who: str) -> str | None:
+    """The approver's name if ``who`` is one of them (by name or Slack id)."""
+    who = (who or "").strip().lower()
+    for a in approvers:
+        if who in (a["name"].lower(), a["slack_user_id"].lower()):
+            return a["name"]
+    return None
+
+
+# --------------------------------------------------------------------------
 # Client content (one client's database)
 # --------------------------------------------------------------------------
 
 ENTRY_COLUMNS = (
-    "id, kind, title, summary, body, url, status, source, external_id, tags, metadata,"
+    "id, kind, title, summary, body, url, status, source, external_id, tags, metadata, related,"
     " occurred_at, created_at, updated_at, created_by, updated_by, archived_at"
 )
 LIST_COLUMNS = (
-    "id, kind, title, summary, url, status, source, external_id, tags, occurred_at,"
+    "id, kind, title, summary, url, status, source, external_id, tags, related, occurred_at,"
     " updated_at, created_by, archived_at"
 )
 
@@ -203,6 +255,7 @@ async def save_entry(
     actor: str,
     entry_id: int | None = None,
     default_source: str = "manual",
+    daily_cap: int | None = None,
 ) -> tuple[dict, str]:
     """Create an entry, or update one. Returns (entry, "created" | "updated").
 
@@ -210,7 +263,8 @@ async def save_entry(
     it has the same source + external_id, or (with no external_id) the same url
     and kind. That makes re-running an import or a skill safe. ``default_source``
     is only used for a new entry (and to match external_id); an update never
-    changes the source unless one is passed.
+    changes the source unless one is passed. ``daily_cap`` limits how many new
+    entries one writer can add to this client in 24 hours (updates don't count).
     """
     source = e.source or default_source
     async with conn.transaction():
@@ -221,10 +275,21 @@ async def save_entry(
             row = await _update_entry(conn, target, e, actor)
             return row, "updated"
         e.require_new()
+        if daily_cap is not None:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM entries WHERE created_by = %s"
+                " AND created_at > now() - interval '24 hours'",
+                (actor,),
+            )
+            if (await cur.fetchone())["n"] >= daily_cap:
+                raise Conflict(
+                    f"Daily limit reached: {daily_cap} new entries for this client from '{actor}' in 24 hours."
+                    " Updates still work; ask an admin if the limit needs raising."
+                )
         cur = await conn.execute(
             f"INSERT INTO entries (kind, title, summary, body, url, status, source, external_id, tags,"
-            f" metadata, occurred_at, created_by, updated_by)"
-            f" VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, coalesce(%s, now()), %s, %s)"
+            f" metadata, related, occurred_at, created_by, updated_by)"
+            f" VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, coalesce(%s, now()), %s, %s)"
             f" RETURNING {ENTRY_COLUMNS}",
             (
                 e.kind,
@@ -237,6 +302,7 @@ async def save_entry(
                 e.external_id,
                 e.tags or [],
                 Jsonb(e.metadata or {}),
+                Jsonb([r.model_dump() for r in e.related or []]),
                 e.occurred_at,
                 actor,
                 actor,
@@ -249,7 +315,7 @@ async def _update_entry(conn: psycopg.AsyncConnection, entry_id: int, e: EntryIn
     fields: dict[str, Any] = e.model_dump(exclude_none=True)
     sets, params = [], []
     for name, value in fields.items():
-        if name == "metadata":
+        if name in ("metadata", "related"):
             value = Jsonb(value)
         sets.append(f"{name} = %s")
         params.append(value)
@@ -398,6 +464,201 @@ async def stats(conn: psycopg.AsyncConnection) -> dict:
         "by_kind": {r["kind"]: r["n"] for r in rows},
         "last_updated": max(lasts) if lasts else None,
     }
+
+
+# -- sources ----------------------------------------------------------------
+
+SOURCE_COLUMNS = "id, system, ref, name, url, role, notes"
+
+
+async def list_sources(conn: psycopg.AsyncConnection) -> list[dict]:
+    return await (await conn.execute(f"SELECT {SOURCE_COLUMNS} FROM sources ORDER BY system, id")).fetchall()
+
+
+async def replace_sources(conn: psycopg.AsyncConnection, sources: list[SourceIn]) -> list[dict]:
+    """Set the full list (how far each has been read is kept separately)."""
+    keys = [(x.system, x.ref) for x in sources]
+    if len(set(keys)) != len(keys):
+        raise ValueError("Each source (system + ref) can only be listed once")
+    async with conn.transaction():
+        existing = {(r["system"], r["ref"]) for r in await list_sources(conn)}
+        for system, ref in existing - set(keys):
+            await conn.execute("DELETE FROM sources WHERE system = %s AND ref = %s", (system, ref))
+        for x in sources:
+            await conn.execute(
+                "INSERT INTO sources (system, ref, name, url, role, notes) VALUES (%s, %s, %s, %s, %s, %s)"
+                " ON CONFLICT (system, ref) DO UPDATE SET name = excluded.name, url = excluded.url,"
+                " role = excluded.role, notes = excluded.notes",
+                (x.system, x.ref, x.name, x.url, x.role, x.notes),
+            )
+    return await list_sources(conn)
+
+
+async def sync_state(conn: psycopg.AsyncConnection) -> dict[str, dict]:
+    rows = await (await conn.execute("SELECT key, checked_until, updated_at, updated_by FROM sync_state")).fetchall()
+    return {r["key"]: r for r in rows}
+
+
+async def mark_checked(
+    conn: psycopg.AsyncConnection, key: str, checked_until: datetime, actor: str
+) -> dict:
+    """Record that ``key`` ('slack:C123') has been read up to ``checked_until``.
+    The caller checks the key is an allowed source."""
+    cur = await conn.execute(
+        "INSERT INTO sync_state (key, checked_until, updated_by) VALUES (%s, %s, %s)"
+        " ON CONFLICT (key) DO UPDATE SET checked_until = excluded.checked_until, updated_at = now(),"
+        " updated_by = excluded.updated_by RETURNING key, checked_until, updated_at, updated_by",
+        (key, checked_until, actor),
+    )
+    return await cur.fetchone()
+
+
+# -- proposals (profile changes waiting for approval) -------------------------
+
+PROPOSAL_COLUMNS = (
+    "id, section, base_content, proposed_content, change_summary, reason, evidence_url, source_keys,"
+    " status, proposed_by, proposed_at, review_channel, review_ts, decided_by, decided_via, decided_at,"
+    " decision_note, applied_content"
+)
+
+
+async def expire_proposals(conn: psycopg.AsyncConnection, days: int) -> int:
+    cur = await conn.execute(
+        "UPDATE proposals SET status = 'expired', decided_at = now(),"
+        " decision_note = 'No decision within ' || %s || ' days'"
+        " WHERE status = 'pending' AND proposed_at < now() - make_interval(days => %s) RETURNING id",
+        (days, days),
+    )
+    return len(await cur.fetchall())
+
+
+async def propose_change(conn: psycopg.AsyncConnection, p: ProposalIn, actor: str) -> tuple[dict, list[int]]:
+    """Record a proposed new text for a section. Returns (proposal, ids it replaced).
+
+    There is at most one pending proposal per section: a new one replaces it, so
+    it should include anything still wanted from the old one. A proposal citing a
+    source that was rejected before is refused, so a rejected change doesn't keep
+    coming back.
+    """
+    async with conn.transaction():
+        if p.source_keys:
+            cur = await conn.execute(
+                "SELECT id FROM proposals WHERE status = 'rejected' AND source_keys && %s LIMIT 1",
+                (p.source_keys,),
+            )
+            hit = await cur.fetchone()
+            if hit:
+                raise Conflict(
+                    f"A change from that source was rejected before (proposal P{hit['id']}); not proposing it again."
+                )
+        cur = await conn.execute(
+            "SELECT content FROM profile_sections WHERE key = %s FOR UPDATE", (p.section,)
+        )
+        row = await cur.fetchone()
+        current = row["content"] if row else ""
+        if p.proposed_content.strip() == current.strip():
+            raise ValueError("That's what the section already says; nothing to propose.")
+        cur = await conn.execute(
+            "SELECT id FROM proposals WHERE section = %s AND status = 'pending' FOR UPDATE", (p.section,)
+        )
+        replaced = [r["id"] for r in await cur.fetchall()]
+        cur = await conn.execute(
+            f"INSERT INTO proposals (section, base_content, proposed_content, change_summary, reason,"
+            f" evidence_url, source_keys, proposed_by) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
+            f" RETURNING {PROPOSAL_COLUMNS}",
+            (p.section, current, p.proposed_content.strip(), p.change_summary, p.reason, p.evidence_url,
+             p.source_keys, actor),
+        )
+        new = await cur.fetchone()
+        if replaced:
+            await conn.execute(
+                "UPDATE proposals SET status = 'superseded', decided_at = now(),"
+                " decision_note = 'Replaced by P' || %s WHERE id = ANY(%s)",
+                (new["id"], replaced),
+            )
+        return new, replaced
+
+
+async def list_proposals(
+    conn: psycopg.AsyncConnection, status: str | None = "pending", limit: int = 50
+) -> list[dict]:
+    query = f"SELECT {PROPOSAL_COLUMNS} FROM proposals"
+    params: list[Any] = []
+    if status:
+        query += " WHERE status = %s"
+        params.append(status)
+    query += " ORDER BY id DESC LIMIT %s"
+    params.append(max(1, min(limit, 200)))
+    return await (await conn.execute(query, params)).fetchall()
+
+
+async def get_proposal(conn: psycopg.AsyncConnection, proposal_id: int) -> dict:
+    cur = await conn.execute(f"SELECT {PROPOSAL_COLUMNS} FROM proposals WHERE id = %s", (proposal_id,))
+    row = await cur.fetchone()
+    if row is None:
+        raise NotFound(f"No proposal P{proposal_id}")
+    return row
+
+
+async def attach_review(conn: psycopg.AsyncConnection, proposal_id: int, channel: str, ts: str) -> dict:
+    cur = await conn.execute(
+        f"UPDATE proposals SET review_channel = %s, review_ts = %s WHERE id = %s RETURNING {PROPOSAL_COLUMNS}",
+        (channel, ts, proposal_id),
+    )
+    row = await cur.fetchone()
+    if row is None:
+        raise NotFound(f"No proposal P{proposal_id}")
+    return row
+
+
+async def decide_proposal(
+    conn: psycopg.AsyncConnection,
+    proposal_id: int,
+    d: DecisionIn,
+    token_label: str,
+    approvers: list[dict],
+) -> dict:
+    """Approve (apply to the profile) or reject a pending proposal.
+
+    ``decided_by`` must be one of the configured approvers when any are set.
+    Approval is refused if the section changed after the proposal was drafted;
+    it then needs re-proposing against the current text.
+    """
+    name = match_approver(approvers, d.decided_by) if approvers else d.decided_by
+    if name is None:
+        allowed = ", ".join(a["name"] for a in approvers)
+        raise Forbidden(f"{d.decided_by!r} isn't an approver. Approvers: {allowed}.")
+    via = f"{d.via} (token: {token_label})"
+    async with conn.transaction():
+        cur = await conn.execute(f"SELECT {PROPOSAL_COLUMNS} FROM proposals WHERE id = %s FOR UPDATE", (proposal_id,))
+        p = await cur.fetchone()
+        if p is None:
+            raise NotFound(f"No proposal P{proposal_id}")
+        if p["status"] != "pending":
+            raise Conflict(f"P{proposal_id} is already {p['status']}")
+        if d.decision == "reject":
+            cur = await conn.execute(
+                f"UPDATE proposals SET status = 'rejected', decided_by = %s, decided_via = %s, decided_at = now(),"
+                f" decision_note = %s WHERE id = %s RETURNING {PROPOSAL_COLUMNS}",
+                (name, via, d.note, proposal_id),
+            )
+            return await cur.fetchone()
+        cur = await conn.execute("SELECT content FROM profile_sections WHERE key = %s FOR UPDATE", (p["section"],))
+        row = await cur.fetchone()
+        current = row["content"] if row else ""
+        if current.strip() != p["base_content"].strip():
+            raise Conflict(
+                f"'{PROFILE_SECTIONS[p['section']]}' changed after P{proposal_id} was proposed;"
+                " propose it again against the current text."
+            )
+        content = (d.corrected_content or p["proposed_content"]).strip()
+        await set_profile_section(conn, p["section"], content, f"{name} (approved P{proposal_id})")
+        cur = await conn.execute(
+            f"UPDATE proposals SET status = 'approved', decided_by = %s, decided_via = %s, decided_at = now(),"
+            f" decision_note = %s, applied_content = %s WHERE id = %s RETURNING {PROPOSAL_COLUMNS}",
+            (name, via, d.note, content, proposal_id),
+        )
+        return await cur.fetchone()
 
 
 def jsonable(row: dict) -> dict:

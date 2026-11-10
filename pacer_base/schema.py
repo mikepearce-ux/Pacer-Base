@@ -34,6 +34,20 @@ CONTROL_MIGRATIONS: list[str] = [
         revoked_at    timestamptz
     );
     """,
+    # 2: an 'approve' scope between write and admin; agency-wide settings
+    """
+    ALTER TABLE api_tokens DROP CONSTRAINT api_tokens_scope_check;
+    ALTER TABLE api_tokens ADD CONSTRAINT api_tokens_scope_check
+        CHECK (scope IN ('read', 'write', 'approve', 'admin'));
+
+    -- Approvers, the review channel, agency-wide Slack channels, limits.
+    CREATE TABLE settings (
+        key         text PRIMARY KEY,
+        value       jsonb NOT NULL,
+        updated_at  timestamptz NOT NULL DEFAULT now(),
+        updated_by  text NOT NULL DEFAULT ''
+    );
+    """,
 ]
 
 CLIENT_MIGRATIONS: list[str] = [
@@ -103,5 +117,57 @@ CLIENT_MIGRATIONS: list[str] = [
     CREATE INDEX entries_tags_idx ON entries USING gin (tags);
     CREATE UNIQUE INDEX entries_source_external_idx
         ON entries (source, external_id) WHERE external_id IS NOT NULL;
+    """,
+    # 2: where to look, links to follow, and changes waiting for approval
+    """
+    -- Other places to look for more on an entry: [{"label", "url"}].
+    ALTER TABLE entries ADD COLUMN related jsonb NOT NULL DEFAULT '[]'::jsonb;
+
+    -- The only places the daily round-up may read for this client. Changed by
+    -- admins only, never by the round-up itself.
+    CREATE TABLE sources (
+        id               bigserial PRIMARY KEY,
+        system           text NOT NULL,
+        ref              text NOT NULL,
+        name             text NOT NULL DEFAULT '',
+        url              text,
+        role             text NOT NULL DEFAULT '',
+        notes            text NOT NULL DEFAULT '',
+        UNIQUE (system, ref)
+    );
+
+    -- How far the round-up has read each source (and each agency-wide channel)
+    -- for this client, so the next run starts where the last one stopped.
+    CREATE TABLE sync_state (
+        key            text PRIMARY KEY,      -- '<system>:<ref>'
+        checked_until  timestamptz NOT NULL,
+        updated_at     timestamptz NOT NULL DEFAULT now(),
+        updated_by     text NOT NULL DEFAULT ''
+    );
+
+    -- A change to a profile section that waits for an approver.
+    CREATE TABLE proposals (
+        id                bigserial PRIMARY KEY,
+        section           text NOT NULL,
+        base_content      text NOT NULL,
+        proposed_content  text NOT NULL,
+        change_summary    text NOT NULL,
+        reason            text NOT NULL DEFAULT '',
+        evidence_url      text,
+        source_keys       text[] NOT NULL DEFAULT '{}',
+        status            text NOT NULL DEFAULT 'pending'
+                          CHECK (status IN ('pending', 'approved', 'rejected', 'expired', 'superseded')),
+        proposed_by       text NOT NULL,
+        proposed_at       timestamptz NOT NULL DEFAULT now(),
+        review_channel    text,
+        review_ts         text,
+        decided_by        text,
+        decided_via       text,
+        decided_at        timestamptz,
+        decision_note     text,
+        applied_content   text
+    );
+    CREATE INDEX proposals_status_idx ON proposals (status, section);
+    CREATE INDEX proposals_source_keys_idx ON proposals USING gin (source_keys);
     """,
 ]

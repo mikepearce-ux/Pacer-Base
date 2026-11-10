@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # What an entry can be. Kept short on purpose so filtering ("all tests") works.
 KINDS: dict[str, str] = {
-    "call": "A call or meeting with the client: notes, decisions, actions",
+    "call": "A call or meeting with the client (or internal, about them): notes, decisions, actions",
     "test": "An A/B or CRO test: hypothesis, setup, status, result",
     "report": "A performance report, results slide or read-out",
     "audit": "A CRO audit, diagnostic or research piece",
@@ -79,6 +79,38 @@ def _clean_tags(value: list[str] | None) -> list[str] | None:
     return out
 
 
+# Systems a client's sources can live in.
+SYSTEMS: dict[str, str] = {
+    "slack": "Slack channel (ref: channel id)",
+    "granola": "Granola meetings (ref: attendee email domain)",
+    "drive": "Google Drive folder (ref: folder id); everything in it counts as approved",
+    "monday": "Monday board (ref: board id)",
+    "intelligems": "Intelligems organisation (ref: organisation id)",
+    "airtable": "Airtable base (ref: base id)",
+    "shopify": "Shopify store (ref: myshopify domain)",
+    "ga4": "GA4 property (ref: property id)",
+    "other": "Anything else (ref: a url or name)",
+}
+System = Literal["slack", "granola", "drive", "monday", "intelligems", "airtable", "shopify", "ga4", "other"]
+
+
+class RelatedLink(BaseModel):
+    """Somewhere else to look for more: a Monday item, Slack thread, test, doc."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    label: str = Field(min_length=1, max_length=80)
+    url: str
+
+    @field_validator("url")
+    @classmethod
+    def _url(cls, v: str) -> str:
+        checked = _check_url(v)
+        if not checked:
+            raise ValueError("related link needs a url")
+        return checked
+
+
 class EntryIn(BaseModel):
     """A new entry, or the fields to change on an existing one.
 
@@ -97,6 +129,7 @@ class EntryIn(BaseModel):
     external_id: str | None = Field(default=None, max_length=200)
     tags: list[str] | None = None
     metadata: dict[str, Any] | None = None
+    related: list[RelatedLink] | None = Field(default=None, max_length=10)
     occurred_at: datetime | None = None
 
     @field_validator("url")
@@ -195,5 +228,92 @@ class TokenIn(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     label: str = Field(min_length=1, max_length=80)
-    scope: Literal["read", "write", "admin"] = "read"
+    scope: Literal["read", "write", "approve", "admin"] = "read"
     clients: list[str] | None = None
+
+
+class SourceIn(BaseModel):
+    """One place the daily round-up may read for a client."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    system: System
+    ref: str = Field(min_length=1, max_length=200)
+    name: str = Field(default="", max_length=120)
+    url: str | None = None
+    role: str = Field(default="", max_length=120)
+    notes: str = Field(default="", max_length=1000)
+
+    @field_validator("url")
+    @classmethod
+    def _url(cls, v: str | None) -> str | None:
+        return _check_url(v)
+
+
+class SourcesIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sources: list[SourceIn] = Field(max_length=50)
+
+
+class Approver(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=80)
+    slack_user_id: str = Field(pattern=r"^[UW][A-Z0-9]{4,20}$")
+
+
+class ChannelRef(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    id: str = Field(pattern=r"^[CG][A-Z0-9]{4,20}$")
+    name: str = Field(default="", max_length=80)
+    notes: str = Field(default="", max_length=300)
+
+
+# Agency-wide settings and the shape each must have.
+SETTING_TYPES: dict[str, Any] = {
+    "approvers": list[Approver],
+    "review_channel": ChannelRef,
+    "agency_channels": list[ChannelRef],
+    "daily_entry_cap": int,
+    "proposal_expiry_days": int,
+}
+SETTING_DEFAULTS: dict[str, Any] = {
+    "approvers": [],
+    "review_channel": None,
+    "agency_channels": [],
+    "daily_entry_cap": 50,
+    "proposal_expiry_days": 7,
+}
+
+
+class ProposalIn(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    section: ProfileSection
+    proposed_content: str = Field(min_length=1, max_length=MAX_SECTION)
+    change_summary: str = Field(min_length=1, max_length=500)
+    reason: str = Field(default="", max_length=2000)
+    evidence_url: str | None = None
+    source_keys: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("evidence_url")
+    @classmethod
+    def _url(cls, v: str | None) -> str | None:
+        return _check_url(v)
+
+    @field_validator("source_keys")
+    @classmethod
+    def _keys(cls, v: list[str]) -> list[str]:
+        return [k.strip()[:200] for k in v if k and k.strip()]
+
+
+class DecisionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    decision: Literal["approve", "reject"]
+    decided_by: str = Field(min_length=1, max_length=80)
+    via: str = Field(default="api", max_length=80)
+    corrected_content: str | None = Field(default=None, max_length=MAX_SECTION)
+    note: str | None = Field(default=None, max_length=1000)

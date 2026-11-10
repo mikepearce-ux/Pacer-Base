@@ -1,55 +1,101 @@
 # Pacer Base
 
-Pacer's shared memory for each client. Every client gets **its own Postgres database** holding a profile (who's who, goals, current tests, numbers we know, issues, promises, key links) and a timeline of **entries**: a short summary of each call, test, report, audit, proposal or doc, with a link to the real thing.
+Pacer's shared memory for each client. Every client gets **its own Postgres database** holding:
 
-Claude reads and writes it through the **Pacer Base connector** (an MCP server), and the **pacer-base skill** tells Claude when to read it and what to log. Tools and automations can use the REST API.
+- a **profile**: who's who, goals, current tests, numbers we know, issues, promises, key links
+- a timeline of **entries**: a short summary of each call, Slack day, test, report, audit, proposal or doc, with a link to the original and links to related things (the Monday item, the Slack thread, the test)
+- a **Where to look** list: the client's Slack channels, Drive folder, Monday board, test tool and meeting domain
+- **changes waiting for approval**: suggested profile edits that an approver hasn't confirmed yet
+
+Claude reads and writes it through the **Pacer Base connector** (an MCP server). The **pacer-base skill** tells Claude when to read it, how to dig further, and what to log. Two **scheduled runs** keep it current: an evening round-up and a morning approval check. Scripts can use the REST API.
 
 ```
- Granola meetings ─┐                          ┌─ pb_s_and_s        (S&S: profile + entries)
- deliverables ─────┼─ Claude + skill ─ MCP ─┐ │
- test updates ─────┘                        ├─ Pacer Base ─┼─ pb_<next client>
- scripts, n8n ──────────────── REST API ────┘  (Railway)   └─ control db: client list, tokens
+ Slack (client + agency channels) ─┐
+ Granola meetings ─────────────────┤   evening      ┌──────────────┐      ┌─ pb_<client a>
+ Drive (approved docs) ────────────┼─ round-up ───▶│  Pacer Base  │──────┼─ pb_<client b>
+ Monday board ─────────────────────┤  (Claude)      │  (Railway)   │      └─ control db: clients,
+ Intelligems tests ────────────────┘                └──────┬───────┘         tokens, settings
+                                                           │ changes to approve
+   #pacer-base-review  ◀── posts ✅/❌ requests ────────────┘
+          │ approvers react
+          └──────────────▶ morning check (Claude) applies what was approved
 ```
 
 Pilot: **S&S**.
 
+## How information gets in
+
+1. **As people work.** When Claude makes a deliverable for a client (results slide, audit, proposal), it logs the link and a summary.
+2. **The evening round-up** (weekdays, about 6pm). For each client, Claude reads **only** the sources listed for that client, from where it stopped last time:
+   - **Slack:** the client's channels (internal, and shared with the client), plus the agency-wide channels, from which it takes only messages about that client.
+   - **Granola:** meetings with anyone from the client's email domain, or about them.
+   - **Drive:** new or changed files in the client's folder (everything there counts as approved).
+   - **Monday:** new, finished and overdue items on the client's board (summarised and linked; tasks stay in Monday).
+   - **Intelligems:** tests starting, changing or ending.
+
+   It logs one card per meeting, file or test, and one per channel per day. Then it suggests profile changes and posts them to the review channel.
+3. **The morning approval check** (weekdays, about 8am). Claude reads the reactions and replies on each request and acts on the approvers' responses:
+   - ✅ applies the change.
+   - ❌ rejects it, and it won't be suggested again from the same source.
+   - A reply with a correction applies the corrected version.
+   - Anyone who isn't an approver is ignored.
+   - After 7 days without a decision, the request lapses.
+
+Re-running anything is safe: an entry with the same source + id, or the same link and kind, is updated rather than duplicated.
+
+## How Claude uses it
+
+`get_client_context` returns the profile, what's waiting for approval, Where to look, and recent activity. Every item carries its links. Pacer Base is the map; the systems hold the detail. So when something looks relevant, Claude follows the links with the matching connector (the Monday item, the Slack thread, the live test) before answering, and says where each fact came from and how old it is.
+
 ## What's stored
 
-**Profile sections** (one living brief per client): `overview`, `people`, `goals`, `current_tests`, `numbers`, `issues`, `promises`, `links`. Replacing a section keeps the previous text in history.
+**Profile sections:** `overview`, `people`, `goals`, `current_tests`, `numbers`, `issues`, `promises`, `links`. Old text is kept in history when a section changes.
 
-**Entries**, one per thing that happened or was made:
+**Entry kinds:**
 
 | Kind | For |
 |---|---|
-| `call` | A call or meeting with the client: notes, decisions, actions |
+| `call` | A call or meeting with the client (or internal, about them) |
 | `test` | An A/B or CRO test: hypothesis, setup, status, result |
 | `report` | A performance report, results slide or read-out |
 | `audit` | A CRO audit, diagnostic or research piece |
 | `proposal` | A proposal, roadmap, SOW or pitch |
 | `doc` | Any other document worth finding again |
 | `decision` | A decision and why it was made |
-| `note` | Anything else |
+| `note` | Anything else (e.g. a day's Slack summary) |
 
-Each entry has a title, summary, optional body, link, status (e.g. `live`, `finished`), tags, the date it happened, where it came from (`source`, e.g. `granola`) and that system's id (`external_id`). Logging the same `source` + `external_id`, or the same link and kind, again **updates** the entry instead of duplicating it, so syncs can be re-run safely. Everything is full-text searchable.
+**Sources** (per client, admin-only): `slack`, `granola`, `drive`, `monday`, `intelligems`, `airtable`, `shopify`, `ga4`, `other`, each with its id, name, link and role (e.g. "shared with client").
+
+**Settings** (agency-wide, admin-only): `approvers` (name and Slack user id), `review_channel`, `agency_channels`, `daily_entry_cap` (default 50), `proposal_expiry_days` (default 7).
+
+## Guardrails
+
+- **A database per client.** A request for one client opens that client's database and nothing else, so data can't leak between clients. A client can be exported (`pg_dump pb_<client>`) or removed on its own.
+- **Only listed sources.** The round-up reads only a client's listed sources plus the agency channels. Only admins can change those lists, not Claude.
+- **Approval for facts.** Cards are saved automatically (they're summaries with links back). Profile changes wait for an approver. Only approve-level tokens can apply them, and only for a named approver.
+- **Nothing deleted.** Entries can only be hidden, and old profile text is kept.
+- **Limits.** By default each writer can add 50 new entries per client per day (updates don't count), and the round-up stops at 30 per client per run.
+- **Untrusted text stays untrusted.** Messages, notes and documents are treated as information, never instructions. The runs post only in the review channel: they never message clients, edit documents, or read DMs or channels that aren't listed.
+- **Tokens** are random, shown once, and stored only as SHA-256 hashes. Scopes, each including the last: `read`; `write` (log entries, propose changes); `approve` (also approve, and edit the profile directly); `admin` (also clients, sources, settings, tokens). A token can be limited to some clients, and then can't tell that the others exist.
+- **No client data in this repo.** It's public, so it holds only code. Client names, channel ids and people live in the database and in your private setup file.
 
 ## Deploy on Railway
 
 1. **New project** > **Deploy from GitHub repo** > `mikepearce-ux/Pacer-Base`. Railway reads `railway.json` and builds the `Dockerfile`.
 2. In the project, **+ New** > **Database** > **PostgreSQL**.
 3. On the Pacer Base service, **Variables**:
-   - `DATABASE_URL` = `${{Postgres.DATABASE_URL}}` (a reference, so the password isn't copied anywhere)
-   - `PACER_BASE_ADMIN_TOKEN` = a long random string:
+   - `DATABASE_URL` = `${{Postgres.DATABASE_URL}}`
+   - `PACER_BASE_ADMIN_TOKEN` = a long random string, kept in the team password manager:
      ```bash
      python3 -c "import secrets; print(secrets.token_urlsafe(32))"
      ```
-     Keep it in the team password manager. It can create clients and tokens.
 4. **Settings** > **Networking** > **Generate Domain**.
 5. Open `https://<your-domain>/health`; it should say `{"ok": true, ...}`.
 6. On the Postgres service, turn on backups for its volume.
 
-The service creates its tables on start, and a database for each client when the client is added. The Railway Postgres user can create databases, so nothing else is needed. One small instance is plenty for the pilot.
+Tables are created on start, and each client's database when the client is added.
 
-## Set up the S&S pilot
+## Set up a client
 
 On your laptop (Python 3.11+):
 
@@ -61,29 +107,50 @@ pip install "git+https://github.com/mikepearce-ux/Pacer-Base@claude/lucid-planck
 export PACER_BASE_URL=https://<your-domain> PACER_BASE_TOKEN=<admin token>
 ```
 
-Add the client. `--domain` is the client's email domain, used to find their meetings in Granola; `--alias` is any other name people use for them:
+Write a **setup file** (keep it out of this repo). It holds the agency settings and, per client, its names, email domains and sources:
 
-```bash
-pacer-base add-client "S&S" --domain <their-domain.com> --alias "<full name>"
+```json
+{
+  "settings": {
+    "approvers": [{"name": "<name>", "slack_user_id": "U..."}],
+    "review_channel": {"id": "C...", "name": "#pacer-base-review"},
+    "agency_channels": [{"id": "C...", "name": "#pacer-all"}]
+  },
+  "clients": [{
+    "name": "<Client name>", "slug": "<client-id>", "aliases": ["<short name>"], "domains": ["<client-domain.com>"],
+    "sources": [
+      {"system": "slack", "ref": "C...", "name": "#<client channel>", "role": "shared with client"},
+      {"system": "slack", "ref": "C...", "name": "#internal-<client>", "role": "internal"},
+      {"system": "granola", "ref": "<client-domain.com>", "role": "attendee email domain"},
+      {"system": "drive", "ref": "<folder id>", "name": "Clients/<client>", "url": "https://drive.google.com/drive/folders/<folder id>", "role": "approved documents"},
+      {"system": "monday", "ref": "<board id>", "name": "<board name>"},
+      {"system": "intelligems", "ref": "<organisation id>"}
+    ]
+  }]
+}
 ```
 
-This creates the database `pb_s_and_s`. Then make the token the connector will use:
-
 ```bash
-pacer-base add-token "Team connector" --scope write --client s-and-s
+pacer-base setup pacer-setup.json
 ```
 
-It prints the token once, the claude.ai connector URL and the Claude Code command. Leaving out `--client` gives access to every client; `--scope read` makes a read-only token.
+It's safe to re-run after editing the file. Then make a token per person. Approvers get `approve`; everyone else gets `write`:
+
+```bash
+pacer-base add-token "<name>" --scope approve
+```
+
+Each command prints the token once, plus the claude.ai connector URL and the Claude Code command for it. The scheduled runs use the connection of the person who sets them up, so that person needs an `approve` token.
 
 ## Connect Claude
 
-**claude.ai:** add a custom connector (Settings > Connectors; on a Team or Enterprise plan an owner adds it for the organisation) with the URL printed above:
+**claude.ai:** add a custom connector (Settings > Connectors) with the URL printed for your token:
 
 ```
 https://<your-domain>/mcp/<token>
 ```
 
-claude.ai connectors can't send custom headers, so the token goes in the URL. Treat that URL like a password.
+claude.ai connectors can't send custom headers, so the token goes in the URL. Treat it like a password.
 
 **Claude Code:**
 
@@ -91,80 +158,74 @@ claude.ai connectors can't send custom headers, so the token goes in the URL. Tr
 claude mcp add --transport http pacer-base https://<your-domain>/mcp --header "Authorization: Bearer <token>"
 ```
 
-**Skill:** add `skill/pacer-base/` as a skill (in claude.ai, upload the folder as a zip; in Claude Code, copy it to `~/.claude/skills/pacer-base/`). The connector also carries short instructions of its own, so it works without the skill, but the skill adds the Granola sync and what a good entry looks like.
+**Skill:** add `skill/pacer-base/` as a skill (in claude.ai, upload the folder as a zip; in Claude Code, copy it to `~/.claude/skills/pacer-base/`).
 
-Then try:
+## Schedule the runs
 
-- "Sync S&S meetings from Granola since 1 September."
-- "What do we know about S&S? Anything I should raise on Thursday's call?"
-- "Log this results slide to Pacer Base for S&S: <link>."
-- "S&S's sitewide CVR for October was 2.3% (GA4). Update their numbers."
+Create two scheduled Claude tasks, weekdays in UK time, each starting a fresh session with these connectors: Pacer Base, Slack, Granola, Google Drive, monday.com and Intelligems (the morning one needs only Pacer Base and Slack).
+
+| Task | When | Instructions |
+|---|---|---|
+| Pacer Base evening round-up | about 6pm | [`routines/evening-roundup.md`](routines/evening-roundup.md) |
+| Pacer Base morning approvals | about 8am | [`routines/morning-approvals.md`](routines/morning-approvals.md) |
+
+To stop them, pause the two tasks. The first round-up reads back 7 days. For an earlier catch-up, ask Claude to run the round-up for a client from a given date.
 
 ## Connector tools
 
-| Tool | Does |
-|---|---|
-| `list_clients` | The clients this token can use, with entry counts |
-| `get_client_context` | Profile plus recent activity, each item with its id and link. Claude calls this first |
-| `search_client_context` | Full-text search of one client's entries |
-| `list_entries` | Timeline filtered by kind, date, tag or status |
-| `get_entry` | One entry in full |
-| `log_entry` | Add an entry, or update one (by id, link, or source + external id) |
-| `update_profile_section` | Replace one profile section |
-| `archive_entry` | Hide an entry (kept, not deleted) |
+| Tool | Access | Does |
+|---|---|---|
+| `list_clients` | read | Clients this token can use, with entry counts |
+| `get_client_context` | read | Profile, waiting changes, Where to look, recent activity. Claude calls this first |
+| `search_client_context` | read | Full-text search of one client's entries |
+| `list_entries` | read | Timeline filtered by kind, date, tag or status |
+| `get_entry` | read | One entry in full, with its links |
+| `list_proposals` | read | Profile changes (waiting, or decided) with current and proposed text |
+| `get_sync_plan` | read | For the scheduled runs: sources, where to read from, agency channels, approvers, limits |
+| `log_entry` | write | Add or update an entry, with related links |
+| `archive_entry` | write | Hide an entry (kept, not deleted) |
+| `propose_profile_change` | write | Suggest a new section text for approval |
+| `attach_review_message` | write | Record where an approval request was posted |
+| `mark_source_checked` | write | Record how far a source has been read (listed sources only) |
+| `decide_proposal` | approve | Apply or reject a waiting change, for a named approver |
+| `update_profile_section` | approve | Replace a section directly |
 
-Clients can be named by id (`s-and-s`), name (`S&S`) or alias.
+Clients can be named by id, name or alias.
 
 ## REST API
 
-For scripts and automations (Zapier, n8n, a test tool webhook). Send `Authorization: Bearer <token>`. Interactive docs at `/api/docs`.
+For scripts and automations. Send `Authorization: Bearer <token>`; interactive docs at `/api/docs`.
 
 | | |
 |---|---|
-| `GET /api/clients` | Clients with stats |
-| `POST /api/clients` | Create a client and its database (admin) |
-| `PATCH /api/clients/{client}` | Change name, aliases, domains, or status `active` / `paused` (read-only) / `archived` (admin) |
-| `GET /api/clients/{client}/context` | The context as markdown, plus the same as JSON |
-| `GET /api/clients/{client}/entries` | List (`kind`, `since`, `until`, `tag`, `status`) or search (`q`) |
-| `POST /api/clients/{client}/entries` | Create or update (201 created, 200 updated) |
+| `GET /api/clients`, `POST` (admin), `PATCH /api/clients/{client}` (admin) | Clients |
+| `GET /api/clients/{client}/context` | The context as markdown, plus JSON |
+| `GET /api/clients/{client}/entries` (`kind`, `since`, `until`, `tag`, `status`, or `q` to search), `POST` | Entries (201 created, 200 updated) |
 | `GET`, `PATCH`, `DELETE /api/clients/{client}/entries/{id}` | Read, change, archive |
-| `GET /api/clients/{client}/profile`, `PUT .../profile/{section}` | Profile |
-| `GET`, `POST /api/tokens`, `DELETE /api/tokens/{id}` | Tokens (admin) |
-
-Example: log a finished test from a script.
-
-```bash
-curl -X POST "$PACER_BASE_URL/api/clients/s-and-s/entries" \
-  -H "Authorization: Bearer $PACER_BASE_TOKEN" -H "Content-Type: application/json" \
-  -d '{"kind": "test", "title": "CART-02 free-shipping message", "status": "finished",
-       "summary": "Ended 14 Oct: +3.1% CVR, 92% chance to beat control, 18k sessions per arm. Rolling out to 100%.",
-       "source": "intelligems", "external_id": "exp_123", "url": "https://app.intelligems.io/...",
-       "occurred_at": "2026-10-14T00:00:00Z"}'
-```
+| `GET /api/clients/{client}/profile`, `PUT .../profile/{section}` (approve) | Profile |
+| `GET /api/clients/{client}/proposals?status=`, `POST` | Profile changes |
+| `POST .../proposals/{id}/decision` (approve), `POST .../proposals/{id}/review` | Decide; record the review message |
+| `GET`, `PUT /api/clients/{client}/sources` (admin) | Sources |
+| `GET /api/settings`, `PUT /api/settings/{key}` (admin) | Settings |
+| `GET`, `POST /api/tokens`, `DELETE /api/tokens/{id}` (admin) | Tokens |
 
 ## Admin commands
 
-All talk to the API, so they work from any laptop with `PACER_BASE_URL` and `PACER_BASE_TOKEN` set:
+They all talk to the API, so they work from any laptop with `PACER_BASE_URL` and `PACER_BASE_TOKEN` set:
 
 ```
-pacer-base clients                          list clients
+pacer-base setup FILE                       settings, clients and sources from a setup file
+pacer-base clients | sources CLIENT | settings | proposals CLIENT [--status all]
 pacer-base add-client NAME [--slug] [--alias ...] [--domain ...]
 pacer-base update-client CLIENT [--name] [--alias ...] [--domain ...] [--status active|paused|archived]
-pacer-base add-token LABEL [--scope read|write|admin] [--client SLUG ...]
-pacer-base tokens                           list tokens (never shows the secrets)
-pacer-base revoke-token ID
-pacer-base context CLIENT                   print what Claude sees for a client
+pacer-base set-sources CLIENT FILE          replace a client's sources
+pacer-base set-setting KEY JSON             e.g. daily_entry_cap 40
+pacer-base add-token LABEL [--scope read|write|approve|admin] [--client SLUG ...]
+pacer-base tokens | revoke-token ID
+pacer-base context CLIENT                   what Claude sees for a client
 ```
 
-`pacer-base serve` and `pacer-base migrate` run on the server (they need `DATABASE_URL`).
-
-## Security and data
-
-- **A database per client.** A request for S&S opens a connection to `pb_s_and_s` and nothing else, so one client's data can't leak into another's results. A client can be exported on its own (`pg_dump pb_s_and_s`) or removed with `DROP DATABASE`. The control database holds only the client list and token hashes.
-- **Tokens** are random, shown once, and stored only as SHA-256 hashes. Scopes: `read`, `write` (read plus logging), `admin` (plus clients and tokens). A token limited to some clients can't tell that the others exist. Revoking takes effect within 30 seconds.
-- **The URL form** (`/mcp/<token>`) is there for claude.ai. The token can show up in Railway's HTTP logs, which only people with access to the Railway project can see (and they can see the database anyway). Prefer the header form wherever headers are supported, and rotate the connector token if the URL is shared by mistake.
-- **No client content in this repo.** It's public, so it holds only code. Client data lives in the Railway database.
-- Pacer Base doesn't call any AI model itself. Summaries are written by Claude (or whoever logs the entry) when the thing is created.
+`pacer-base serve` and `pacer-base migrate` run on the server.
 
 ## Development
 
@@ -172,7 +233,7 @@ pacer-base context CLIENT                   print what Claude sees for a client
 python3 -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
 ```
 
-The tests need a throwaway Postgres server (they create and drop their own databases on it). With Docker:
+The tests need a throwaway Postgres server (they create and drop their own databases). With Docker:
 
 ```bash
 ./scripts/test-db.sh
@@ -184,27 +245,28 @@ then run the `export` line it prints, and:
 pytest -q
 ```
 
-The tests cover the REST API, client isolation (checked in the databases themselves), token scopes and client limits, de-duplication, search, profile history, restarts, and the connector end to end through a real server and the official MCP client, with the token in the header and in the URL. GitHub Actions runs them on every push.
+The tests cover the REST API, client isolation (checked in the databases themselves), scopes and client limits, de-duplication, search, profile history, proposals and approval (approvers only, corrections, rejection memory, superseding, conflicts, expiry), sources, settings, the daily cap, the setup command, and the connector end to end through a real server and the official MCP client, including a full round-up and morning-check pass. GitHub Actions runs them on every push.
 
 ```
 pacer_base/
   app.py         REST API, health check, mounts the MCP endpoint
   mcp_server.py  connector tools and their instructions
   auth.py        tokens, scopes, the /mcp/<token> handling
-  store.py       queries (registry, entries, profile, search)
+  store.py       queries: registry, settings, entries, profile, sources, proposals, search
   db.py          connection pools, one database per client, migrations
   schema.py      SQL migrations (append only)
   render.py      the markdown Claude reads
-  models.py      kinds, profile sections, input validation
+  models.py      kinds, sections, sources, settings, validation
   cli.py         pacer-base command
+routines/        instructions for the two scheduled runs
 skill/pacer-base/SKILL.md
 ```
 
-Schema changes: append a migration to `CONTROL_MIGRATIONS` or `CLIENT_MIGRATIONS` in `schema.py`. On start the service applies new ones to the control database and every client database.
+Schema changes: append a migration to `CONTROL_MIGRATIONS` or `CLIENT_MIGRATIONS` in `schema.py`; on start the service applies new ones to the control database and every client database.
 
 ## Next steps after the pilot
 
-- **Sign-in instead of a shared token.** OAuth with Google sign-in limited to Pacer accounts, so each person connects as themselves and entries record who logged them.
-- **Scheduled Granola sync** (a scheduled Claude task running the skill's sync each evening), and webhooks from Intelligems or Airtable for test status.
+- **Sign-in instead of tokens in URLs:** Google sign-in limited to Pacer accounts, so each person connects as themselves.
+- **Approve from a page** as well as from Slack.
 - **Semantic search** (pgvector) once there's enough history for keyword search to miss things.
-- Add the "log to Pacer Base" step to the results-slide, test-results and audit skills.
+- Add a "log to Pacer Base" step to the results-slide, test-results and audit skills.

@@ -143,7 +143,9 @@ def test_validation_errors(api):
 
 def test_profile_sections_and_history(api, settings):
     c = new_client(api)
-    tok = make_token(api, label="mike")
+    writer = make_token(api, "write")
+    assert api.put("/api/clients/s-and-s/profile/goals", json={"content": "x"}, headers=auth(writer)).status_code == 403
+    tok = make_token(api, "approve", label="mike")
     r = api.put("/api/clients/s-and-s/profile/goals", json={"content": "- CVR 2.1% -> 2.4%"}, headers=auth(tok))
     assert r.status_code == 200 and r.json()["updated_by"] == "mike"
     api.put("/api/clients/s-and-s/profile/goals", json={"content": "- CVR 2.1% -> 2.5%"}, headers=auth(tok))

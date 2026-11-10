@@ -1,8 +1,13 @@
 """API tokens.
 
 Tokens are random strings shown once and stored only as SHA-256 hashes. Each has
-a scope (read < write < admin) and optionally a list of clients it may use; a
-token limited to one client can't see that any other client exists.
+a scope and optionally a list of clients it may use; a token limited to one
+client can't see that any other client exists. Scopes, each including the last:
+
+* read: read profiles and entries
+* write: also log entries and propose profile changes
+* approve: also approve or reject proposals and edit profiles directly
+* admin: also manage clients, their sources, settings and tokens
 
 The MCP endpoint accepts a token two ways, because claude.ai custom connectors
 can't send headers:
@@ -25,7 +30,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .db import Database
 
-SCOPES = ("read", "write", "admin")
+SCOPES = ("read", "write", "approve", "admin")
 TOKEN_PREFIX = "pb_"
 CACHE_SECONDS = 30
 PRINCIPAL_KEY = "pacer_base.principal"

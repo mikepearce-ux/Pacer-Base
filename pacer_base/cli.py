@@ -5,12 +5,18 @@ Server side (needs DATABASE_URL):
     pacer-base migrate
 
 Admin from anywhere (talks to the API; set PACER_BASE_URL and PACER_BASE_TOKEN):
-    pacer-base add-client "S&S" --alias SNS --domain example.com
+    pacer-base setup pacer-setup.json         settings, clients and sources in one go
+    pacer-base add-client "Acme" --alias AC --domain acme.com
     pacer-base clients
-    pacer-base add-token "Team connector" --scope write
+    pacer-base sources acme
+    pacer-base set-sources acme sources.json
+    pacer-base settings
+    pacer-base set-setting daily_entry_cap 40
+    pacer-base proposals acme
+    pacer-base add-token "Jo Bloggs" --scope approve
     pacer-base tokens
     pacer-base revoke-token 3
-    pacer-base context s-and-s
+    pacer-base context acme
 """
 
 from __future__ import annotations
@@ -136,6 +142,81 @@ def cmd_add_token(args: argparse.Namespace) -> int:
     return 0
 
 
+def _load_json(path: str) -> Any:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"Can't read {path}: {exc}")
+
+
+def cmd_sources(args: argparse.Namespace) -> int:
+    rows = _api(args).ok("GET", f"/api/clients/{urllib.parse.quote(args.client)}/sources")
+    if not rows:
+        print("No sources yet.")
+    for x in rows:
+        print(f"{x['system']:<12} {x['ref']:<40} {x['name']:<32} {x['role']}")
+    return 0
+
+
+def cmd_set_sources(args: argparse.Namespace) -> int:
+    data = _load_json(args.file)
+    body = data if isinstance(data, dict) and "sources" in data else {"sources": data}
+    rows = _api(args).ok("PUT", f"/api/clients/{urllib.parse.quote(args.client)}/sources", body)
+    print(f"{len(rows)} source(s) set for {args.client}.")
+    return 0
+
+
+def cmd_settings(args: argparse.Namespace) -> int:
+    print(json.dumps(_api(args).ok("GET", "/api/settings"), indent=2))
+    return 0
+
+
+def cmd_set_setting(args: argparse.Namespace) -> int:
+    try:
+        value = json.loads(args.value)
+    except ValueError:
+        value = args.value
+    print(json.dumps(_api(args).ok("PUT", f"/api/settings/{args.key}", {"value": value}), indent=2))
+    return 0
+
+
+def cmd_proposals(args: argparse.Namespace) -> int:
+    rows = _api(args).ok("GET", f"/api/clients/{urllib.parse.quote(args.client)}/proposals?status={args.status}")
+    if not rows:
+        print(f"No {args.status} proposals.")
+    for p in rows:
+        who = f" by {p['decided_by']}" if p["decided_by"] else ""
+        print(f"P{p['id']:<4} {p['status']:<10} {p['section']:<14} {p['change_summary']}{who}")
+    return 0
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    """Apply a setup file: agency settings, then each client and its sources. Safe to re-run."""
+    api = _api(args)
+    data = _load_json(args.file)
+    for key, value in (data.get("settings") or {}).items():
+        api.ok("PUT", f"/api/settings/{key}", {"value": value})
+        print(f"setting {key}: set")
+    for c in data.get("clients") or []:
+        body = {k: c[k] for k in ("name", "slug", "aliases", "domains") if k in c}
+        status, resp = api("POST", "/api/clients", body)
+        if status == 201:
+            print(f"client {resp['slug']}: created (database {resp['db_name']})")
+            slug = resp["slug"]
+        elif status == 409:
+            slug = c.get("slug") or c["name"]
+            api.ok("PATCH", f"/api/clients/{urllib.parse.quote(slug)}",
+                   {k: c[k] for k in ("name", "aliases", "domains") if k in c})
+            print(f"client {slug}: already there, details updated")
+        else:
+            raise SystemExit(f"Error {status} creating {c.get('name')}: {resp}")
+        if "sources" in c:
+            rows = api.ok("PUT", f"/api/clients/{urllib.parse.quote(slug)}/sources", {"sources": c["sources"]})
+            print(f"client {slug}: {len(rows)} source(s) set")
+    return 0
+
+
 def cmd_tokens(args: argparse.Namespace) -> int:
     for t in _api(args).ok("GET", "/api/tokens"):
         state = "revoked" if t["revoked_at"] else f"last used {t['last_used_at'] or 'never'}"
@@ -191,7 +272,12 @@ def main(argv: list[str] | None = None) -> int:
 
     s = api_parser("add-token", "Create an API token (admin)")
     s.add_argument("label", help="Who or what it's for, e.g. 'Team connector'")
-    s.add_argument("--scope", choices=["read", "write", "admin"], default="write")
+    s.add_argument(
+        "--scope",
+        choices=["read", "write", "approve", "admin"],
+        default="write",
+        help="read; write (log entries, propose changes); approve (also approve changes); admin",
+    )
     s.add_argument("--client", action="append", help="Limit to this client (repeatable). Default: all clients")
     s.set_defaults(fn=cmd_add_token)
 
@@ -199,6 +285,30 @@ def main(argv: list[str] | None = None) -> int:
     s = api_parser("revoke-token", "Revoke a token (admin)")
     s.add_argument("id", type=int)
     s.set_defaults(fn=cmd_revoke_token)
+
+    s = api_parser("setup", "Apply a setup file: settings, clients and their sources (admin)")
+    s.add_argument("file")
+    s.set_defaults(fn=cmd_setup)
+
+    s = api_parser("sources", "List the places the round-up may read for a client")
+    s.add_argument("client")
+    s.set_defaults(fn=cmd_sources)
+
+    s = api_parser("set-sources", "Replace a client's sources from a JSON file (admin)")
+    s.add_argument("client")
+    s.add_argument("file")
+    s.set_defaults(fn=cmd_set_sources)
+
+    api_parser("settings", "Show agency-wide settings").set_defaults(fn=cmd_settings)
+    s = api_parser("set-setting", "Change one setting (admin); the value is JSON")
+    s.add_argument("key", help="approvers, review_channel, agency_channels, daily_entry_cap, proposal_expiry_days")
+    s.add_argument("value")
+    s.set_defaults(fn=cmd_set_setting)
+
+    s = api_parser("proposals", "List a client's profile changes")
+    s.add_argument("client")
+    s.add_argument("--status", default="pending", choices=["pending", "approved", "rejected", "expired", "superseded", "all"])
+    s.set_defaults(fn=cmd_proposals)
 
     s = api_parser("context", "Print a client's context as Claude sees it")
     s.add_argument("client")
