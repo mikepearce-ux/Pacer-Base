@@ -85,6 +85,7 @@ Re-running anything is safe: an entry with the same source + id, or the same lin
 2. In the project, **+ New** > **Database** > **PostgreSQL**.
 3. On the Pacer Base service, **Variables**:
    - `DATABASE_URL` = `${{Postgres.DATABASE_URL}}`
+   - `PACER_BASE_PUBLIC_URL` = `https://<your-domain>` (optional; used in the sign-in handshake's metadata)
    - `PACER_BASE_ADMIN_TOKEN` = a long random string, kept in the team password manager:
      ```bash
      python3 -c "import secrets; print(secrets.token_urlsafe(32))"
@@ -151,6 +152,8 @@ https://<your-domain>/mcp/<token>
 ```
 
 claude.ai connectors can't send custom headers, so the token goes in the URL. Treat it like a password.
+
+There's no sign-in. claude.ai still runs a sign-in handshake when you press **Connect**, even for servers without one, and fails with "Couldn't register with …'s sign-in service" if nothing answers it. So Pacer Base answers it automatically (`pacer_base/oauth.py`): registration, an authorize step that approves straight away, and a token exchange with PKCE. A window may flash open and closed; nothing to type. The token from that handshake grants nothing by itself. Access is still the key in the URL, and the handshake is only offered for a URL whose key is valid.
 
 **Claude Code:**
 

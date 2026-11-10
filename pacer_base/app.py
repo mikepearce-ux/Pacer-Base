@@ -15,7 +15,7 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from . import __version__, render, store
+from . import __version__, oauth, render, store
 from .auth import Authenticator, MCPAuth, Principal, bearer
 from .config import Settings
 from .db import Database
@@ -58,6 +58,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="Pacer Base", version=__version__, lifespan=lifespan, docs_url="/api/docs", redoc_url=None, openapi_url="/api/openapi.json")
     app.state.db = db
     app.state.auth = authenticator
+    app.state.public_url = settings.public_url
 
     # -- auth helpers -----------------------------------------------------
     async def principal(request: Request) -> Principal:
@@ -346,6 +347,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not await authenticator.revoke(token_id):
             raise HTTPException(404, "No active token with that id")
         return {"revoked": token_id}
+
+    # The automatic sign-in handshake some connector clients insist on.
+    app.include_router(oauth.build_router(db, authenticator))
 
     # MCP last: it's mounted at the root, so the routes above take precedence.
     app.mount("/", MCPAuth(mcp_app, authenticator))

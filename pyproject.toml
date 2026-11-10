@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pacer-base"
-version = "0.2.0"
+version = "0.2.1"
 description = "Pacer Base: per-client context (links to docs and summaries) that Claude reads through an MCP connector."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -14,6 +14,7 @@ dependencies = [
   "psycopg[binary,pool]>=3.2",
   "mcp>=2.3,<3",
   "pyyaml>=6",
+  "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]

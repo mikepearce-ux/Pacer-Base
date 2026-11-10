@@ -16,6 +16,9 @@ class Settings:
     admin_token: str = ""
     client_db_prefix: str = "pb_"
     port: int = 8000
+    # The public https address, if it can't be worked out from the request
+    # (used in the automatic sign-in handshake's metadata).
+    public_url: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -29,4 +32,5 @@ class Settings:
             admin_token=os.environ.get("PACER_BASE_ADMIN_TOKEN", ""),
             client_db_prefix=os.environ.get("PACER_BASE_CLIENT_DB_PREFIX", "pb_"),
             port=int(os.environ.get("PORT", "8000")),
+            public_url=os.environ.get("PACER_BASE_PUBLIC_URL", ""),
         )

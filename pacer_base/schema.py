@@ -48,6 +48,37 @@ CONTROL_MIGRATIONS: list[str] = [
         updated_by  text NOT NULL DEFAULT ''
     );
     """,
+    # 3: the automatic sign-in handshake some connector clients insist on (oauth.py)
+    """
+    CREATE TABLE oauth_clients (
+        client_id           text PRIMARY KEY,
+        client_secret_hash  text,
+        client_name         text NOT NULL DEFAULT '',
+        redirect_uris       text[] NOT NULL,
+        auth_method         text NOT NULL DEFAULT 'none',
+        created_at          timestamptz NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE oauth_codes (
+        code_hash       text PRIMARY KEY,
+        client_id       text NOT NULL,
+        redirect_uri    text NOT NULL,
+        code_challenge  text NOT NULL,
+        resource        text,
+        scope           text,
+        expires_at      timestamptz NOT NULL,
+        used_at         timestamptz
+    );
+
+    CREATE TABLE oauth_refresh_tokens (
+        token_hash  text PRIMARY KEY,
+        client_id   text NOT NULL,
+        resource    text,
+        scope       text,
+        created_at  timestamptz NOT NULL DEFAULT now(),
+        revoked_at  timestamptz
+    );
+    """,
 ]
 
 CLIENT_MIGRATIONS: list[str] = [
