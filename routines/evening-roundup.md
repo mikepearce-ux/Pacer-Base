@@ -30,9 +30,14 @@ If it's refused because that source was rejected before, drop it. Never call `up
 Call `get_sync_plan` again. For each pending proposal with no `review_ts`, post one message to the review channel:
 
 > **<Client>: change to approve** (P<id>)
-> <Section>: <change_summary>
+> **<Section>:** <change_summary>
 > Why: <reason> (<evidence link>)
-> React ✅ to approve, ❌ to reject, or reply in the thread with a correction. Approvers: <approver names>.
+>
+> (the proposed text: the whole section if it's new or short, otherwise the lines that change, with a few lines either side, as a quote)
+>
+> React ✅ to approve, ❌ to reject, or reply in this thread with a correction. Approvers: <approver names>.
+
+Approvers must be able to see what they're approving without opening anything, so always include the proposed text.
 
 Then call `attach_review_message` with the proposal id, the channel id and the message's ts.
 
