@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pacer-base"
+version = "0.1.0"
+description = "Pacer Base: per-client context (links to docs and summaries) that Claude reads through an MCP connector."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "psycopg[binary,pool]>=3.2",
+  "mcp>=2.3,<3",
+  "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[project.scripts]
+pacer-base = "pacer_base.cli:main"
+
+[tool.setuptools]
+packages = ["pacer_base"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
