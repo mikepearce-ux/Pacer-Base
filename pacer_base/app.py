@@ -16,9 +16,10 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from . import __version__, oauth, render, store
-from .auth import Authenticator, MCPAuth, Principal, bearer
+from .auth import Authenticator, MCPAuth, MCPRouter, Principal, bearer
 from .config import Settings
 from .db import Database
+from .heatmap_mcp import build_heatmap_mcp
 from .mcp_server import build_mcp
 from .models import (
     PROFILE_SECTIONS,
@@ -35,7 +36,7 @@ from .models import (
 log = logging.getLogger("pacer_base")
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, attention_lab_transport=None) -> FastAPI:
     settings = settings or Settings.from_env()
     if not settings.admin_token:
         log.warning("PACER_BASE_ADMIN_TOKEN is not set: no one can create clients or tokens.")
@@ -47,11 +48,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Stateless + JSON responses: every MCP request stands alone, so redeploys
     # and restarts never strand a session, and no sticky routing is needed.
     mcp_app = mcp.streamable_http_app(streamable_http_path="/mcp", stateless_http=True, json_response=True, host="0.0.0.0")
+    heatmap = build_heatmap_mcp(db, settings, attention_lab_transport)
+    heatmap_app = heatmap.streamable_http_app(
+        streamable_http_path="/heatmap/mcp", stateless_http=True, json_response=True, host="0.0.0.0"
+    )
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await db.open()
-        async with mcp.session_manager.run():
+        async with mcp.session_manager.run(), heatmap.session_manager.run():
             yield
         await db.close()
 
@@ -352,7 +357,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(oauth.build_router(db, authenticator))
 
     # MCP last: it's mounted at the root, so the routes above take precedence.
-    app.mount("/", MCPAuth(mcp_app, authenticator))
+    # Two connectors: Pacer Base at /mcp, Attention Lab (heat maps) at /heatmap/mcp.
+    app.mount("/", MCPRouter([
+        ("/mcp", MCPAuth(mcp_app, authenticator, path="/mcp")),
+        ("/heatmap/mcp", MCPAuth(heatmap_app, authenticator, path="/heatmap/mcp")),
+    ]))
     return app
 
 

@@ -1,6 +1,6 @@
 ---
 name: pacer-base
-description: Read and keep up to date Pacer's per-client context in Pacer Base (profile, summaries of and links to calls, Slack, tests, reports, audits and docs, and where to look for more). Use before any work on a Pacer client (call prep, test ideas, results slides, audits, proposals, reports, "what do we know about X", "what's happening with Y"), after creating a deliverable for a client, to suggest or approve a change to a client's profile, and when asked to sync a client's meetings or Slack or "log this to Pacer Base".
+description: Read and keep up to date Pacer's per-client context in Pacer Base (profile, summaries of and links to calls, Slack, tests, reports, audits, docs and artifacts, and where to look for more). Use before any work on a Pacer client (call prep, test ideas, results slides, audits, proposals, reports, "what do we know about X", "what's happening with Y"), after creating a deliverable or artifact for a client, to suggest or approve a change to a client's profile, and when asked to sync a client's meetings or Slack, to "log this to Pacer Base" or to "log my client work".
 ---
 
 # Pacer Base
@@ -53,6 +53,15 @@ What a good entry has:
 - **occurred_at**: when it happened, not when you logged it.
 
 Logging the same `url` and kind again, or the same `source` and `external_id`, updates the entry instead of duplicating it. To change one field, pass `entry_id` and that field.
+
+### Artifacts and docs
+
+You work with the person's own access (their Drive, Slack, Granola), so their work can be logged as it happens:
+- **When you make something for a client in this chat** (an artifact, a deck, a doc, a results write-up), log it once it's finished. Use the right kind (`report`, `audit`, `proposal`, `doc` or `test`), set `url` to its link, and for a claude.ai artifact add the tag `artifact`.
+- **When the person shares a link with you or says "log this"**, read it, then log it with a summary.
+- **Check the link can be opened by the team before logging it.** A Drive file should be in the shared Pacer drive or shared with pacer.studio; check its sharing if you can. A claude.ai artifact is private until its owner shares it. If it isn't shared, ask them to share it or save it to Pacer › Clients › <client>, and log it once they have. A card nobody else can open isn't useful.
+- **"Log my client work"** ("log my S&S work from this week"): search their Drive for files created or changed in that period that mention the client (by name or alias), plus meetings they ran in Granola. Check what's already in Pacer Base (`search_client_context` by title or link), then show them a short list of what's new and log the ones they confirm.
+- Results write-ups and insight packs published on the client portal are logged automatically, and so are heat maps of client sites (Attention Lab). Don't log those again by hand.
 
 ## 3. Changes to the profile need approval
 

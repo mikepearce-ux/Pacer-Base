@@ -144,6 +144,25 @@ def bearer(headers: Iterable[tuple[bytes, bytes]]) -> str | None:
     return None
 
 
+class MCPRouter:
+    """Sends each connector's paths to its own MCPAuth-wrapped app (longest
+    prefix first), and answers 404 for anything else."""
+
+    def __init__(self, routes: list[tuple[str, "MCPAuth"]]):
+        self.routes = sorted(routes, key=lambda r: len(r[0]), reverse=True)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            path: str = scope["path"]
+            for prefix, app in self.routes:
+                if path == prefix or path.startswith(prefix + "/"):
+                    await app(scope, receive, send)
+                    return
+            await _json(send, 404, {"error": "Not found"})
+            return
+        await self.routes[0][1](scope, receive, send)
+
+
 class MCPAuth:
     """ASGI wrapper in front of the MCP app: checks the token, rewrites
     ``/mcp/<token>`` to ``/mcp``, and hands the Principal to the tools via the

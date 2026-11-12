@@ -34,8 +34,11 @@ Anything under "Waiting for approval" is unconfirmed.
 
 Write when something is created, happens or is decided: log_entry with the link, a
 2-5 sentence summary someone could act on, and related links to follow up (Monday
-item, Slack thread, test). Re-logging the same url (or source + external_id)
-updates the entry instead of duplicating it.
+item, Slack thread, test). That includes artifacts and docs you make for a client
+in a chat (tag artifacts "artifact"). Only log links the team can open: if a doc or
+artifact is private, ask its owner to share it first. Re-logging the same url (or
+source + external_id) updates the entry instead of duplicating it. Portal write-ups
+and Attention Lab heat maps of client sites are logged automatically.
 
 Profile changes need one of the configured approvers: use propose_profile_change,
 which queues the change for review. Only approve-level tokens can call

@@ -174,6 +174,32 @@ Create two scheduled Claude tasks, weekdays in UK time, each starting a fresh se
 
 To stop them, pause the two tasks. The first round-up reads back 7 days. For an earlier catch-up, ask Claude to run the round-up for a client from a given date.
 
+## Attention Lab connector (heat maps)
+
+The same server also runs a second connector for Attention Lab, the heat mapper. Add it in claude.ai as its own custom connector (name it "Attention Lab"), using the same key:
+
+```
+https://<your-domain>/heatmap/mcp/<token>
+```
+
+| Tool | Does |
+|---|---|
+| `run_heatmap` | Heat map one page (desktop and mobile), wait for it, and return the written review, recommendations and the heat map images |
+| `run_heatmaps` | Start up to 25 pages at once |
+| `get_heatmap` | Read one result, with images |
+| `list_heatmaps` | The 10 most recent |
+
+It calls Attention Lab with one service key. Set these on the Pacer Base service:
+
+- `ATTENTION_LAB_URL`: Attention Lab's public address
+- `ATTENTION_LAB_TOKEN`: an Attention Lab API key (`ahm_…`) for a shared Pacer account
+
+Attention Lab logs each finished heat map of a client site to that client's Pacer Base itself. It matches the client by the site's domain, or uses the client passed in. To switch that on, set `PACER_BASE_URL`, `PACER_BASE_TOKEN` (a write key) and `PUBLIC_BASE_URL` on Attention Lab. Each heat map gets a read-only share link (`/s/<token>`), so cards in Pacer Base and Slack open without a login. The skill is in `skill/attention-lab/`.
+
+## Each person's own work
+
+Claude works with each person's own access, so the pacer-base skill logs artifacts and docs as they're made for a client, once their links are shared with the team. For a weekly sweep of your own Drive and artifacts, run [`routines/personal-weekly.md`](routines/personal-weekly.md) as a weekly scheduled task in your own Claude, or paste it into a chat on Fridays.
+
 ## Connector tools
 
 | Tool | Access | Does |

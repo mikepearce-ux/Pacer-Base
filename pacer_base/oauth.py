@@ -29,7 +29,8 @@ from .db import Database
 
 CODE_SECONDS = 600
 ACCESS_SECONDS = 30 * 24 * 3600
-MCP_PREFIX = "/mcp/"
+# Connector endpoints that take a key in the URL: Pacer Base and Attention Lab.
+MCP_PREFIXES = ("/heatmap/mcp/", "/mcp/")
 
 
 def _base(request: Request) -> str:
@@ -64,25 +65,33 @@ def build_router(db: Database, authenticator: Authenticator) -> APIRouter:
         """The connector key inside a resource URL, if it's a valid one."""
         if not resource:
             return None
-        if not resource.startswith(base + MCP_PREFIX):
-            return None
-        key = resource[len(base + MCP_PREFIX):].strip("/")
-        if not key or "/" in key:
-            return None
-        return key if await authenticator.verify(key) else None
+        for prefix in MCP_PREFIXES:
+            if resource.startswith(base + prefix):
+                key = resource[len(base + prefix):].strip("/")
+                if not key or "/" in key:
+                    return None
+                return key if await authenticator.verify(key) else None
+        return None
 
     # -- discovery ----------------------------------------------------------
-    @router.get("/.well-known/oauth-protected-resource/mcp/{key}")
-    async def protected_resource(key: str, request: Request):
+    async def describe(request: Request, prefix: str, key: str, name: str):
         base = _base(request)
         if not await authenticator.verify(key):
             return _error(404, "not_found", "Not found")
         return {
-            "resource": f"{base}{MCP_PREFIX}{key}",
+            "resource": f"{base}{prefix}{key}",
             "authorization_servers": [base],
             "bearer_methods_supported": ["header"],
-            "resource_name": "Pacer Base",
+            "resource_name": name,
         }
+
+    @router.get("/.well-known/oauth-protected-resource/mcp/{key}")
+    async def protected_resource(key: str, request: Request):
+        return await describe(request, "/mcp/", key, "Pacer Base")
+
+    @router.get("/.well-known/oauth-protected-resource/heatmap/mcp/{key}")
+    async def protected_resource_heatmap(key: str, request: Request):
+        return await describe(request, "/heatmap/mcp/", key, "Attention Lab")
 
     @router.get("/.well-known/oauth-authorization-server")
     async def authorization_server(request: Request):
