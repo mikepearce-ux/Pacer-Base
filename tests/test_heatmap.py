@@ -53,6 +53,7 @@ class FakeLab:
                 "desktop": {"compositePath": "/uploads/a1/desktop.jpg"} if done else None,
                 "mobile": {"compositePath": "/uploads/a1/mobile.jpg"} if done else None,
                 "aiReview": REVIEW if done else {"status": "processing"},
+                "capture": {"country": "GB", "network": "server", "popupsCleared": ["cookie banner (accepted)"]} if done else None,
             })
         if request.method == "GET" and path.startswith("/uploads/a1/"):
             return httpx.Response(200, content=JPEG, headers={"content-type": "image/jpeg"})
@@ -109,6 +110,7 @@ def test_run_heatmap_waits_and_returns_review_and_images(lab_server):
             text = r.content[0].text
             assert "the price is easy to miss" in text and "Move the price" in text and "Clarity" in text
             assert "https://lab.example/s/tok1" in text and "Logged to Pacer Base for acme" in text
+            assert "from a server outside the UK" in text and "Cleared first: cookie banner (accepted)." in text
             assert fake.created[-1] == {"url": "https://acme.example/", "client": "acme"}
 
             r = await c.call_tool("get_heatmap", {"heatmap_id": "a1", "include_images": False})
@@ -156,3 +158,12 @@ def test_not_configured(api):
 
 def key_from_api(api):
     return api.post("/api/tokens", json={"label": "k", "scope": "write"}, headers=admin_headers()).json()["token"]
+
+
+def test_capture_line():
+    from pacer_base.heatmap_mcp import _capture_line
+
+    assert _capture_line(None) is None
+    assert _capture_line({"country": "GB", "network": "proxy"}) == "Captured as a visitor in the UK, through a network address there."
+    line = _capture_line({"country": "GB", "network": "server", "popupsCleared": ["a", "b"]})
+    assert line.startswith("Captured with UK browser settings but from a server outside the UK") and line.endswith("Cleared first: a; b.")
