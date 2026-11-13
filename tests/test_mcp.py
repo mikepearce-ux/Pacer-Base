@@ -83,6 +83,13 @@ def test_full_flow_with_token_in_url(live_server):
                 {"client": "sns", "source": "granola", "external_id": "m-1", "summary": "Agreed to test it from 18 Nov."},
             )
             assert "Updated entry #1" in text(r)
+            # Logging the meeting's link from a chat joins Granola's entry and says so.
+            r = await c.call_tool(
+                "log_entry",
+                {"client": "sns", "kind": "call", "title": "The call", "summary": "Mine.",
+                 "url": "https://notes.granola.ai/d/m-1", "related": [{"label": "Thread", "url": "https://x.example/t"}]},
+            )
+            assert "already entry #1" in text(r) and "made by granola" in text(r)
 
             r = await c.call_tool(
                 "update_profile_section",

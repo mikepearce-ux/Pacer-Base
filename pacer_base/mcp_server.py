@@ -286,6 +286,13 @@ def build_mcp(db: Database) -> MCPServer:
             raise ToolError(_validation_message(exc)) from exc
         except (ValueError, store.NotFound, store.Conflict) as exc:
             raise ToolError(str(exc)) from exc
+        if action == "linked":
+            return (
+                f"That link is already entry #{row['id']} in {c['name']}, made by {row['source']}, which keeps"
+                " its own summary up to date. Your related links and tags were added to it. If there's more"
+                " to say (who it was shared with, what was decided), log that as its own note or decision.\n"
+                + render.entry_line(row)
+            )
         return f"{action.capitalize()} entry #{row['id']} in {c['name']}:\n" + render.entry_line(row)
 
     @mcp.tool(annotations=ARCHIVE, structured_output=False)

@@ -44,6 +44,7 @@ MAX_SUMMARY = 4_000
 MAX_BODY = 100_000
 MAX_URL = 2_000
 MAX_SECTION = 20_000
+MAX_RELATED = 10
 
 
 def slugify(name: str) -> str:
@@ -129,7 +130,7 @@ class EntryIn(BaseModel):
     external_id: str | None = Field(default=None, max_length=200)
     tags: list[str] | None = None
     metadata: dict[str, Any] | None = None
-    related: list[RelatedLink] | None = Field(default=None, max_length=10)
+    related: list[RelatedLink] | None = Field(default=None, max_length=MAX_RELATED)
     occurred_at: datetime | None = None
 
     @field_validator("url")

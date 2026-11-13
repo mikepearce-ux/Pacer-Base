@@ -52,7 +52,7 @@ What a good entry has:
 - **body** (optional): decisions, actions with owners and dates, figures. Not whole transcripts.
 - **occurred_at**: when it happened, not when you logged it.
 
-Logging the same `url` and kind again, or the same `source` and `external_id`, updates the entry instead of duplicating it. To change one field, pass `entry_id` and that field.
+Logging the same `url` and kind again, or the same `source` and `external_id`, updates the entry instead of duplicating it. If the link is already an entry made by a system (the portal, Attention Lab, a Drive or Granola sync), that entry keeps its own summary and your related links and tags are added; put anything extra (who it was shared with, what was decided) in its own `note` or `decision`. To change one field, pass `entry_id` and that field.
 
 ### Artifacts and docs
 

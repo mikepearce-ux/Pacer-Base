@@ -82,6 +82,64 @@ def test_same_url_and_kind_updates_instead_of_duplicating(api):
     assert c["action"] == "created"
 
 
+PACK_URL = "https://acme.example/insights/october"
+THREAD = {"label": "Slack thread", "url": "https://acme.slack.com/archives/C1/p1"}
+
+
+def test_system_adopts_an_entry_first_logged_from_a_shared_link(api):
+    new_client(api)
+    tok = make_token(api)
+    shared = {"kind": "report", "title": "October insights", "summary": "Shared with the client in Slack.",
+              "url": PACK_URL, "source": "slack", "tags": ["monthly"], "related": [THREAD]}
+    first = api.post("/api/clients/s-and-s/entries", json=shared, headers=auth(tok)).json()["entry"]
+
+    portal = {"kind": "report", "title": "October 2026 (Monthly insights)", "summary": "Up 29% on the year.",
+              "url": PACK_URL, "source": "portal", "external_id": "s-and-s/insights/october", "status": "published"}
+    r = api.post("/api/clients/s-and-s/entries", json=portal, headers=auth(tok))
+    assert r.status_code == 200 and r.json()["action"] == "updated"
+    e = r.json()["entry"]
+    assert e["id"] == first["id"]
+    assert (e["source"], e["external_id"]) == ("portal", "s-and-s/insights/october")
+    assert e["summary"] == "Up 29% on the year." and e["tags"] == ["monthly"]
+    assert [x["url"] for x in e["related"]] == [THREAD["url"]]
+
+    # The portal's next sync finds it directly; still one entry.
+    again = api.post("/api/clients/s-and-s/entries", json={**portal, "summary": "Up 30%."}, headers=auth(tok)).json()
+    assert again["entry"]["id"] == first["id"] and again["entry"]["summary"] == "Up 30%."
+    assert len(api.get("/api/clients/s-and-s/entries", headers=auth(tok)).json()) == 1
+
+
+def test_a_systems_entry_keeps_its_content_when_its_link_is_logged_again(api):
+    new_client(api)
+    tok = make_token(api)
+    heatmap = {"kind": "audit", "title": "Heat map: home", "summary": "Hero gets most attention.",
+               "url": "https://lab.example/s/abc", "source": "attention-lab", "external_id": "a1",
+               "related": [{"label": "Desktop", "url": "https://lab.example/s/abc/desktop.jpg"}]}
+    first = api.post("/api/clients/s-and-s/entries", json=heatmap, headers=auth(tok)).json()["entry"]
+
+    for extra in ({}, {"external_id": "C1:2026-11-13"}):  # with or without its own id
+        r = api.post("/api/clients/s-and-s/entries", headers=auth(tok), json={
+            "kind": "audit", "title": "Heat map shared", "summary": "Jo shared it.", "url": heatmap["url"],
+            "source": "slack", "tags": ["shared"], "related": [THREAD], **extra})
+        assert r.status_code == 200 and r.json()["action"] == "linked"
+        e = r.json()["entry"]
+        assert e["id"] == first["id"]
+        assert (e["source"], e["external_id"], e["title"], e["summary"]) == (
+            "attention-lab", "a1", "Heat map: home", "Hero gets most attention.")
+        assert {x["url"] for x in e["related"]} == {THREAD["url"], heatmap["related"][0]["url"]}
+        assert e["tags"] == ["shared"]
+    assert len(api.get("/api/clients/s-and-s/entries", headers=auth(tok)).json()) == 1
+
+
+def test_one_source_can_log_several_things_under_one_link(api):
+    new_client(api)
+    tok = make_token(api)
+    board = {"kind": "note", "title": "Board", "summary": "x", "url": "https://acme.monday.com/boards/1", "source": "monday"}
+    a = api.post("/api/clients/s-and-s/entries", json={**board, "external_id": "1:2026-11-12"}, headers=auth(tok)).json()
+    b = api.post("/api/clients/s-and-s/entries", json={**board, "external_id": "1:2026-11-13"}, headers=auth(tok)).json()
+    assert a["action"] == b["action"] == "created" and a["entry"]["id"] != b["entry"]["id"]
+
+
 def test_patch_archive_and_filters(api):
     new_client(api)
     tok = make_token(api)

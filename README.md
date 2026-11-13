@@ -41,7 +41,7 @@ Pilot: **S&S**.
    - Anyone who isn't an approver is ignored.
    - After 7 days without a decision, the request lapses.
 
-Re-running anything is safe: an entry with the same source + id, or the same link and kind, is updated rather than duplicated.
+Re-running anything is safe: an entry with the same source + id, or the same link and kind, is updated rather than duplicated. A thing logged from two places stays one entry: when the portal or Attention Lab logs a link that was already logged from Slack, it takes over that entry; when someone logs a link that a system already owns, the system's summary is kept and their related links and tags are added.
 
 ## How Claude uses it
 

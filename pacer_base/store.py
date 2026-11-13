@@ -15,6 +15,7 @@ from pydantic import TypeAdapter
 from .db import Database, client_db_name
 from .models import (
     KINDS,
+    MAX_RELATED,
     PROFILE_SECTIONS,
     SETTING_DEFAULTS,
     SETTING_TYPES,
@@ -22,6 +23,7 @@ from .models import (
     DecisionIn,
     EntryIn,
     ProposalIn,
+    RelatedLink,
     SourceIn,
     slugify,
 )
@@ -230,23 +232,66 @@ async def set_profile_section(
         return await cur.fetchone()
 
 
-async def _find_existing(conn: psycopg.AsyncConnection, e: EntryIn, source: str) -> int | None:
+async def _find_existing(conn: psycopg.AsyncConnection, e: EntryIn, source: str) -> dict | None:
+    """The entry this write should update rather than duplicate, if there is one.
+
+    First the same source + external_id; failing that, the same url and kind.
+    The link match skips entries this same source made under a different
+    external_id: one source can log several things under one link (Monday
+    notes for different days all link the board).
+    """
     if e.external_id:
         cur = await conn.execute(
-            "SELECT id FROM entries WHERE source = %s AND external_id = %s FOR UPDATE",
+            "SELECT id, source, external_id, related, tags FROM entries"
+            " WHERE source = %s AND external_id = %s FOR UPDATE",
             (source, e.external_id),
         )
         row = await cur.fetchone()
-        return row["id"] if row else None
-    if e.url and e.kind:
-        cur = await conn.execute(
-            "SELECT id FROM entries WHERE url = %s AND kind = %s AND archived_at IS NULL"
-            " ORDER BY id LIMIT 1 FOR UPDATE",
-            (e.url, e.kind),
-        )
-        row = await cur.fetchone()
-        return row["id"] if row else None
-    return None
+        if row:
+            return row
+    if not (e.url and e.kind):
+        return None
+    sql = (
+        "SELECT id, source, external_id, related, tags FROM entries"
+        " WHERE url = %s AND kind = %s AND archived_at IS NULL"
+    )
+    params: list[Any] = [e.url, e.kind]
+    if e.external_id:
+        sql += " AND NOT (source = %s AND external_id IS NOT NULL AND external_id <> %s)"
+        params += [source, e.external_id]
+    cur = await conn.execute(sql + " ORDER BY id LIMIT 1 FOR UPDATE", params)
+    return await cur.fetchone()
+
+
+def _join(e: EntryIn, existing: dict, source: str) -> tuple[EntryIn, str]:
+    """Fold a write into an entry that another source logged first under the same link.
+
+    Something is often logged twice from different places: a portal page or heat
+    map shared in Slack, then logged by the system that made it. There is one
+    entry for it either way:
+
+    - Same source, or neither side has an external_id: an ordinary update.
+    - The write has an external_id and the entry has none (it was logged from a
+      shared link): the entry takes the write's content, source and
+      external_id, so that source finds it directly next time.
+    - The entry has an external_id from another source: it belongs to that
+      system, which rewrites it on its own schedule, so it keeps its content,
+      source and external_id.
+
+    In the last two cases the related links and tags of both are kept.
+    Returns the write to apply and the action ("updated" or "linked").
+    """
+    if existing["source"] == source or not (e.external_id or existing["external_id"]):
+        return e, "updated"
+    related, seen = [], set()
+    for link in [*(e.related or []), *(RelatedLink(**r) for r in existing["related"] or [])]:
+        if link.url not in seen:
+            seen.add(link.url)
+            related.append(link)
+    tags = list(dict.fromkeys([*(existing["tags"] or []), *(e.tags or [])]))
+    if existing["external_id"]:
+        return EntryIn(related=related[:MAX_RELATED], tags=tags), "linked"
+    return e.model_copy(update={"source": source, "related": related[:MAX_RELATED], "tags": tags}), "updated"
 
 
 async def save_entry(
@@ -257,23 +302,26 @@ async def save_entry(
     default_source: str = "manual",
     daily_cap: int | None = None,
 ) -> tuple[dict, str]:
-    """Create an entry, or update one. Returns (entry, "created" | "updated").
+    """Create an entry, or update one. Returns (entry, "created" | "updated" | "linked").
 
     Without ``entry_id``, an existing entry is updated instead of duplicated when
-    it has the same source + external_id, or (with no external_id) the same url
-    and kind. That makes re-running an import or a skill safe. ``default_source``
-    is only used for a new entry (and to match external_id); an update never
-    changes the source unless one is passed. ``daily_cap`` limits how many new
-    entries one writer can add to this client in 24 hours (updates don't count).
+    it has the same source + external_id, or the same url and kind (see
+    ``_find_existing`` and ``_join``). That makes re-running an import or a skill
+    safe, and keeps one entry for a thing logged from two places. The action is
+    "linked" when the entry belongs to another system and only gained related
+    links and tags. ``default_source`` is only used for a new entry (and to
+    match external_id); an update never changes the source unless one is
+    passed. ``daily_cap`` limits how many new entries one writer can add to this
+    client in 24 hours (updates don't count).
     """
     source = e.source or default_source
     async with conn.transaction():
-        target = entry_id
-        if target is None:
-            target = await _find_existing(conn, e, source)
-        if target is not None:
-            row = await _update_entry(conn, target, e, actor)
-            return row, "updated"
+        if entry_id is not None:
+            return await _update_entry(conn, entry_id, e, actor), "updated"
+        existing = await _find_existing(conn, e, source)
+        if existing is not None:
+            e, action = _join(e, existing, source)
+            return await _update_entry(conn, existing["id"], e, actor), action
         e.require_new()
         if daily_cap is not None:
             cur = await conn.execute(
