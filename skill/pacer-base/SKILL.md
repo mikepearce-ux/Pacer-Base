@@ -78,7 +78,7 @@ Two scheduled tasks keep Pacer Base current. Their full instructions are in the 
 - **Evening round-up** (weekdays, about 6pm): reads each client's listed sources since the last run, logs cards, proposes profile changes and posts them for approval.
 - **Morning approval check** (weekdays, about 8am): applies changes an approver ✅'d or corrected, records ❌s, and replies in each thread.
 
-To run a round-up by hand ("catch up S&S from 1 October"), follow `routines/evening-roundup.md` for that client, reading from the date given.
+To run a round-up by hand ("catch up S&S from 1 October"), use the pacer-base-routines skill (its evening round-up, for that client, reading from the date given). If that skill isn't installed, say so rather than improvising one.
 
 ## Don'ts
 - Don't read outside a client's listed sources during a round-up.
