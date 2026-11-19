@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pacer-base"
-version = "0.3.0"
+version = "0.4.0"
 description = "Pacer Base: per-client context (links to docs and summaries) that Claude reads through an MCP connector."
 readme = "README.md"
 requires-python = ">=3.11"

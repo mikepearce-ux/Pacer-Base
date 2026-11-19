@@ -283,3 +283,25 @@ def test_roundup_and_morning_check_flow(live_server):
             assert "### Current tests" in ctx and "launching Thursday" in ctx and "Waiting for approval" not in ctx
 
     asyncio.run(flow())
+
+
+def test_logged_by_names_the_person_and_systems_section(live_server):
+    admin(live_server, "POST", "/api/clients", {"name": "S&S"})
+    url = f"{live_server}/mcp/{token(live_server, 'write', label='Pacer team')}"
+
+    async def flow():
+        async with Client(url) as c:
+            r = await c.call_tool("log_entry", {"client": "s-and-s", "kind": "doc", "title": "Theme release notes", "summary": "Shipped v2.3.",
+                                                 "url": "https://docs.example/release", "logged_by": "Sarah Doherty"})
+            assert "Created entry #1" in text(r)
+            assert "Sarah Doherty (via Pacer team)" in text(await c.call_tool("get_entry", {"client": "s-and-s", "entry_id": 1}))
+            # Without a name it's the key's label, as before.
+            await c.call_tool("log_entry", {"client": "s-and-s", "kind": "note", "title": "x", "summary": "y"})
+            assert "by Pacer team" in text(await c.call_tool("get_entry", {"client": "s-and-s", "entry_id": 2}))
+            r = await c.call_tool("propose_profile_change", {"client": "s-and-s", "section": "systems", "proposed_content": "- Shopify, theme v2.3",
+                                                                "change_summary": "First Systems section", "logged_by": "Sarah Doherty"})
+            assert not r.is_error, text(r)
+            props = text(await c.call_tool("list_proposals", {"client": "s-and-s"}))
+            assert "Systems" in props and "Sarah Doherty (via Pacer team)" in props
+
+    asyncio.run(flow())

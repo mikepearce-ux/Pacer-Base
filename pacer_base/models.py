@@ -30,10 +30,11 @@ PROFILE_SECTIONS: dict[str, str] = {
     "numbers": "Numbers we know",
     "issues": "Known issues",
     "promises": "What we've promised",
+    "systems": "Systems",
     "links": "Key links",
 }
 ProfileSection = Literal[
-    "overview", "people", "goals", "current_tests", "numbers", "issues", "promises", "links"
+    "overview", "people", "goals", "current_tests", "numbers", "issues", "promises", "systems", "links"
 ]
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")

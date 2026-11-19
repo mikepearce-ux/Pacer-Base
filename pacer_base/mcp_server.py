@@ -39,6 +39,15 @@ in a chat (tag artifacts "artifact"). Only log links the team can open: if a doc
 artifact is private, ask its owner to share it first. Re-logging the same url (or
 source + external_id) updates the entry instead of duplicating it. Portal write-ups
 and Attention Lab heat maps of client sites are logged automatically.
+When you log or propose in a chat, pass logged_by with the name of the person
+you're working with, so the team can see who it came from.
+
+Besides the clients there is one internal space, `pacer` (Pacer, internal): the
+agency's own tools and systems (Pacer Base, the results portal, Attention Lab,
+internal skills and schedules), how-tos, and agency-wide decisions. Use it for
+work that isn't about one client. A client's tech set-up (platform, theme and
+repo, apps and integrations, environments, who owns what, how to get access,
+never passwords) goes in its profile's Systems section.
 
 Profile changes need one of the configured approvers: use propose_profile_change,
 which queues the change for review. Only approve-level tokens can call
@@ -84,6 +93,14 @@ def _parse_when(value: str | None, field: str) -> datetime | None:
 
 def _validation_message(exc: ValidationError) -> str:
     return "; ".join(f"{'.'.join(map(str, e['loc'])) or 'input'}: {e['msg']}" for e in exc.errors())
+
+
+def _actor(who, logged_by: str | None) -> str:
+    """Who to record as the author: the person named in the chat, through which key."""
+    name = " ".join((logged_by or "").split())[:60]
+    if not name or name.lower() == who.label.lower():
+        return who.label
+    return f"{name} (via {who.label})"
 
 
 def build_mcp(db: Database) -> MCPServer:
@@ -252,6 +269,10 @@ def build_mcp(db: Database) -> MCPServer:
         ] = None,
         metadata: Annotated[dict[str, Any] | None, Field(description="Optional extra facts as key/value pairs")] = None,
         entry_id: Annotated[int | None, Field(description="Set to update an existing entry; only the fields you pass change")] = None,
+        logged_by: Annotated[
+            str | None,
+            Field(description="The name of the person you're working with in this chat (e.g. 'Sarah Doherty'), so the team can see who logged it. Leave out in scheduled runs."),
+        ] = None,
     ) -> str:
         """Record something that was created, happened or was decided for a client, with a
         link, a summary and links to follow up. Updates instead of duplicating when the url
@@ -277,7 +298,7 @@ def build_mcp(db: Database) -> MCPServer:
                 row, action = await store.save_entry(
                     conn,
                     data,
-                    who.label,
+                    _actor(who, logged_by),
                     entry_id=entry_id,
                     default_source="claude",
                     daily_cap=None if who.has("admin") else settings["daily_entry_cap"],
@@ -324,6 +345,10 @@ def build_mcp(db: Database) -> MCPServer:
             list[str] | None,
             Field(description="Ids of what it came from, e.g. 'slack:C123:1731249000.1234' or 'granola:<meeting id>'. A change from a source that was rejected before is refused."),
         ] = None,
+        logged_by: Annotated[
+            str | None,
+            Field(description="The name of the person you're working with in this chat (e.g. 'Sarah Doherty'), so the team can see who logged it. Leave out in scheduled runs."),
+        ] = None,
     ) -> str:
         """Suggest a change to a client's profile (numbers, live tests, promises, people,
         goals...). It's held as 'waiting for approval' until an approver says yes; the
@@ -339,7 +364,7 @@ def build_mcp(db: Database) -> MCPServer:
                 source_keys=source_keys or [],
             )
             async with db.client(c["db_name"]) as conn:
-                row, replaced = await store.propose_change(conn, data, who.label)
+                row, replaced = await store.propose_change(conn, data, _actor(who, logged_by))
         except ValidationError as exc:
             raise ToolError(_validation_message(exc)) from exc
         except (ValueError, store.Conflict) as exc:
