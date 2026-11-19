@@ -7,7 +7,7 @@ description: Run or schedule Pacer Base's routines - the evening round-up (read 
 
 Three routines keep Pacer Base current. Each one is a full set of instructions in
 this skill's `references/` folder: read the matching file and follow it exactly.
-They use the **BASE** connector (Pacer Base) plus the connectors named in each file.
+They use the **Pacer Base** connector plus the connectors named in each file. The morning approvals need an approver's own **Pacer Base approver** connector, because the shared one can't approve.
 
 | Routine | File | Who runs it | Usually |
 |---|---|---|---|
@@ -25,7 +25,7 @@ They use the **BASE** connector (Pacer Base) plus the connectors named in each f
 - "Log my client work" → `references/personal-weekly.md`.
 
 Before a round-up, check the connectors it needs are on (Slack, Granola, Google Drive,
-monday.com, Intelligems and BASE). If one is missing, say which, run the rest, and don't mark
+monday.com, Intelligems and Pacer Base). If one is missing, say which, run the rest, and don't mark
 that source as checked.
 
 ## Scheduling
@@ -37,8 +37,8 @@ For your own weekly log (or if you're asked to set up the agency schedule again)
 scheduled task in Claude with:
 - the prompt: "Use the pacer-base-routines skill and run the <routine name>. This is an
   unattended scheduled run: don't ask questions, use judgement and finish."
-- the connectors that routine lists (always BASE, plus Slack, Granola, Google Drive,
-  monday.com and Intelligems for the round-up; BASE and Slack for approvals; BASE, Google
+- the connectors that routine lists (always Pacer Base, plus Slack, Granola, Google Drive,
+  monday.com and Intelligems for the round-up; Pacer Base approver and Slack for approvals; Pacer Base, Google
   Drive and Granola for the personal weekly)
 - a time a few minutes off the hour (e.g. 4:47pm on Fridays)
 

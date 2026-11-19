@@ -1,4 +1,4 @@
-Using the pacer-base skill and the BASE connector, log my client work from the last 7 days that isn't in Pacer Base yet.
+Using the pacer-base skill and the Pacer Base connector, log my client work from the last 7 days that isn't in Pacer Base yet.
 
 My name and role are in the prompt that started this run (e.g. "I'm Sarah Doherty, developer"). Pass my name as `logged_by` on every `log_entry`, and use my role to judge what's worth logging (see the pacer-base skill's "who logs what"). If no name was given, ask once; in an unattended run, leave `logged_by` out. Work that isn't about one client goes in the internal space `pacer`.
 
