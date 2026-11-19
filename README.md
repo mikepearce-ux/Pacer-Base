@@ -2,12 +2,12 @@
 
 Pacer's shared memory for each client. Every client gets **its own Postgres database** holding:
 
-- a **profile**: who's who, goals, current tests, numbers we know, issues, promises, key links
+- a **profile**: overview, who's who, goals, current tests, numbers we know, known issues, what we've promised, **systems** (the tech set-up) and key links
 - a timeline of **entries**: a short summary of each call, Slack day, test, report, audit, proposal or doc, with a link to the original and links to related things (the Monday item, the Slack thread, the test)
 - a **Where to look** list: the client's Slack channels, Drive folder, Monday board, test tool and meeting domain
 - **changes waiting for approval**: suggested profile edits that an approver hasn't confirmed yet
 
-Claude reads and writes it through the **Pacer Base connector** (an MCP server). The **pacer-base skill** tells Claude when to read it, how to dig further, and what to log. Two **scheduled runs** keep it current: an evening round-up and a morning approval check. Scripts can use the REST API.
+Claude reads and writes it through the **Pacer Base connector** (an MCP server), and runs heat maps through the **Attention Lab connector** on the same server. Three skills tell Claude how to use them: **pacer-base** (when to read it, how to dig further, what to log), **attention-lab** (heat maps) and **pacer-base-routines** (the scheduled runs and each person's weekly). Two **agency scheduled runs** keep it current: an evening round-up and a morning approval check. Scripts can use the REST API.
 
 ```
  Slack (client + agency channels) ─┐
@@ -21,12 +21,12 @@ Claude reads and writes it through the **Pacer Base connector** (an MCP server).
           └──────────────▶ morning check (Claude) applies what was approved
 ```
 
-Pilot: **S&S**.
+Clients: Stripe & Stare, The Body Shop, Universal Works, Living Planet (incl. Planet Paleo), Innermost, Smart Salem and Cutler and Gross (prospect), plus **Pacer (internal)** (`pacer`): the agency's own space for its tools, systems, how-tos and agency-wide decisions.
 
 ## How information gets in
 
-1. **As people work.** When Claude makes a deliverable for a client (results slide, audit, proposal), it logs the link and a summary.
-2. **The evening round-up** (weekdays, about 6pm). For each client, Claude reads **only** the sources listed for that client, from where it stopped last time:
+1. **As people work.** When Claude makes a deliverable for a client (results slide, audit, proposal, release notes, design brief), it logs the link and a summary under the person's name (`logged_by`). Each person also runs a **personal weekly** (Fridays) that logs their own Drive files and Granola notes the round-up can't see. The results portal and Attention Lab log their own write-ups and heat maps automatically.
+2. **The evening round-up** (weekdays, 5:36pm UK). For each client, Claude reads **only** the sources listed for that client, from where it stopped last time:
    - **Slack:** the client's channels (internal, and shared with the client), plus the agency-wide channels, from which it takes only messages about that client.
    - **Granola:** meetings with anyone from the client's email domain, or about them.
    - **Drive:** new or changed files in the client's folder (everything there counts as approved).
@@ -34,7 +34,7 @@ Pilot: **S&S**.
    - **Intelligems:** tests starting, changing or ending.
 
    It logs one card per meeting, file or test, and one per channel per day. Then it suggests profile changes and posts them to the review channel.
-3. **The morning approval check** (weekdays, about 8am). Claude reads the reactions and replies on each request and acts on the approvers' responses:
+3. **The morning approval check** (weekdays, 7:34am UK). Claude reads the reactions and replies on each request and acts on the approvers' responses:
    - ✅ applies the change.
    - ❌ rejects it, and it won't be suggested again from the same source.
    - A reply with a correction applies the corrected version.
@@ -49,7 +49,9 @@ Re-running anything is safe: an entry with the same source + id, or the same lin
 
 ## What's stored
 
-**Profile sections:** `overview`, `people`, `goals`, `current_tests`, `numbers`, `issues`, `promises`, `links`. Old text is kept in history when a section changes.
+**Profile sections:** `overview`, `people`, `goals`, `current_tests`, `numbers`, `issues`, `promises`, `systems`, `links`. `systems` is the client's tech set-up: platform and stores, theme and where its code lives, apps and integrations, environments, who owns what at Pacer and the client, and how to get access (never passwords or keys). Old text is kept in history when a section changes.
+
+**Who logged it:** each entry and proposal records its author: the key's label, or `<name> (via <key>)` when Claude passes the person's name with `logged_by`, so cards made through the shared team key still say who they came from. The daily cap counts per author.
 
 **Entry kinds:**
 
@@ -141,11 +143,11 @@ It's safe to re-run after editing the file. Then make a token per person. Approv
 pacer-base add-token "<name>" --scope approve
 ```
 
-Each command prints the token once, plus the claude.ai connector URL and the Claude Code command for it. The scheduled runs use the connection of the person who sets them up, so that person needs an `approve` token.
+Each command prints the token once, plus the claude.ai connector URL and the Claude Code command for it. The org connectors use a shared `write` key; the morning approvals use an approver's own `approve` key through a personal connector (see Keys in use below).
 
 ## Connect Claude
 
-**claude.ai:** add a custom connector (Settings > Connectors) with the URL printed for your token:
+**claude.ai:** an owner adds **Pacer Base** and **Attention Lab** as organisation connectors (Organization settings › Connectors) with the team key's URLs, and everyone clicks Connect. Approvers add their own approve-key URL as a personal connector (Customize › Connectors) named "Pacer Base approver". The URL looks like:
 
 ```
 https://<your-domain>/mcp/<token>
@@ -155,22 +157,34 @@ claude.ai connectors can't send custom headers, so the token goes in the URL. Tr
 
 There's no sign-in. claude.ai still runs a sign-in handshake when you press **Connect**, even for servers without one, and fails with "Couldn't register with …'s sign-in service" if nothing answers it. So Pacer Base answers it automatically (`pacer_base/oauth.py`): registration, an authorize step that approves straight away, and a token exchange with PKCE. A window may flash open and closed; nothing to type. The token from that handshake grants nothing by itself. Access is still the key in the URL, and the handshake is only offered for a URL whose key is valid.
 
+**Keys in use at Pacer:**
+
+| Key | Scope | Used by |
+|---|---|---|
+| Pacer team | write | The org connectors **Pacer Base** and **Attention Lab** (everyone) |
+| <approver> (approver) | approve | That approver's own **personal** connector, named "Pacer Base approver", and the morning approvals run. Never an org connector, or everyone could approve |
+| Daily round-up | write | Round-up and catch-up runs outside claude.ai |
+| Attention Lab | write | Attention Lab logging heat maps |
+| Results portal | write | The portal syncing write-ups |
+
 **Claude Code:**
 
 ```bash
 claude mcp add --transport http pacer-base https://<your-domain>/mcp --header "Authorization: Bearer <token>"
 ```
 
-**Skill:** add `skill/pacer-base/` as a skill (in claude.ai, upload the folder as a zip; in Claude Code, copy it to `~/.claude/skills/pacer-base/`).
+**Skills:** `skill/pacer-base/`, `skill/attention-lab/` and `skill/pacer-base-routines/`. In claude.ai, zip each folder and upload it in **Organization settings › Plugins & skills** so everyone has it; in Claude Code, copy them to `~/.claude/skills/`.
 
 ## Schedule the runs
 
-Create two scheduled Claude tasks, weekdays in UK time, each starting a fresh session with these connectors: Pacer Base, Slack, Granola, Google Drive, monday.com and Intelligems (the morning one needs only Pacer Base and Slack).
+Two agency scheduled tasks, set up once (by Mike), each starting a fresh session. Their prompts say "use the pacer-base-routines skill and run the …", so the instructions live in the skill (and in [`routines/`](routines/)).
 
-| Task | When | Instructions |
-|---|---|---|
-| Pacer Base evening round-up | about 6pm | [`routines/evening-roundup.md`](routines/evening-roundup.md) |
-| Pacer Base morning approvals | about 8am | [`routines/morning-approvals.md`](routines/morning-approvals.md) |
+| Task | When (UK) | Connectors | Suggested model |
+|---|---|---|---|
+| Pacer Base evening round-up | weekdays 5:36pm | Pacer Base, Slack, Granola, Google Drive, monday.com, Intelligems | Opus 5.5 |
+| Pacer Base morning approvals | weekdays 7:34am | Pacer Base approver, Slack | Sonnet 5.5 |
+
+Don't set up a second round-up: two would read and post everything twice.
 
 To stop them, pause the two tasks. The first round-up reads back 7 days. For an earlier catch-up, ask Claude to run the round-up for a client from a given date.
 
@@ -198,7 +212,11 @@ Attention Lab logs each finished heat map of a client site to that client's Pace
 
 ## Each person's own work
 
-Claude works with each person's own access, so the pacer-base skill logs artifacts and docs as they're made for a client, once their links are shared with the team. For a weekly sweep of your own Drive and artifacts, run [`routines/personal-weekly.md`](routines/personal-weekly.md) as a weekly scheduled task in your own Claude, or paste it into a chat on Fridays.
+Claude works with each person's own access, so the pacer-base skill logs artifacts and docs as they're made for a client (once their links are shared with the team), under that person's name. It also tells each role what to log where: developers (releases, specs, set-up changes, plus the Systems section), owners (proposals, pricing, promises), account leads (wraps, calls), designers (briefs, Figma), CRO (audits, tests, results).
+
+Everyone sets up a **personal weekly** in their own Claude: a scheduled task on Fridays at 4:47pm, on Sonnet 5.5, with Pacer Base, Google Drive and Granola, and the prompt *"I'm <name>, <role> at Pacer. Use the pacer-base-routines skill and run the personal weekly. This is an unattended scheduled run: don't ask questions, use judgement and finish."* It logs their client docs and calls that Pacer Base doesn't have yet, and lists anything only in their My Drive so they can move it to the client's folder.
+
+Two habits make most of this automatic: save client docs in the client's folder under Pacer › Clients (the round-up reads it), and share client call notes to the Pacer team space in Granola.
 
 ## Connector tools
 
@@ -211,9 +229,9 @@ Claude works with each person's own access, so the pacer-base skill logs artifac
 | `get_entry` | read | One entry in full, with its links |
 | `list_proposals` | read | Profile changes (waiting, or decided) with current and proposed text |
 | `get_sync_plan` | read | For the scheduled runs: sources, where to read from, agency channels, approvers, limits |
-| `log_entry` | write | Add or update an entry, with related links |
+| `log_entry` | write | Add or update an entry, with related links; `logged_by` names the person |
 | `archive_entry` | write | Hide an entry (kept, not deleted) |
-| `propose_profile_change` | write | Suggest a new section text for approval |
+| `propose_profile_change` | write | Suggest a new section text for approval; `logged_by` names the person |
 | `attach_review_message` | write | Record where an approval request was posted |
 | `mark_source_checked` | write | Record how far a source has been read (listed sources only) |
 | `decide_proposal` | approve | Apply or reject a waiting change, for a named approver |
@@ -287,15 +305,19 @@ pacer_base/
   render.py      the markdown Claude reads
   models.py      kinds, sections, sources, settings, validation
   cli.py         pacer-base command
-routines/        instructions for the two scheduled runs
-skill/pacer-base/SKILL.md
+routines/        instructions for the scheduled runs and the personal weekly
+skill/pacer-base/            the main skill
+skill/attention-lab/         heat maps
+skill/pacer-base-routines/   the routines as a skill (references/ holds copies of routines/)
 ```
 
 Schema changes: append a migration to `CONTROL_MIGRATIONS` or `CLIENT_MIGRATIONS` in `schema.py`; on start the service applies new ones to the control database and every client database.
 
-## Next steps after the pilot
+## Next steps
 
 - **Sign-in instead of tokens in URLs:** Google sign-in limited to Pacer accounts, so each person connects as themselves.
 - **Approve from a page** as well as from Slack.
 - **Semantic search** (pgvector) once there's enough history for keyword search to miss things.
 - Add a "log to Pacer Base" step to the results-slide, test-results and audit skills.
+- **Granola Pro**, so the runs can read more than the last 30 days of meetings and use transcripts.
+- **A UK proxy for Attention Lab** (`CAPTURE_PROXY_URL`), so heat maps see UK prices and no location prompts.
