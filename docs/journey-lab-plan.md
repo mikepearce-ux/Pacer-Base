@@ -1,6 +1,6 @@
 # Journey Lab: plan and build checklist
 
-**Status:** planning, nothing built yet · **Started:** 19 Nov 2026 · **Logged in Pacer Base:** the `pacer` space (see [Logging](#10-logging-what-goes-into-pacer-base))
+**Status:** planning, nothing built yet · **Started:** 19 Nov 2026 · **Pacer Base:** to be logged in the `pacer` space (see [Logging](#10-logging-what-goes-into-pacer-base))
 
 Use this file to check the work against: tick each box when it's done, and add the date and your initials (`[x] ... (21 Nov, MP)`). When a decision is made or a phase finishes, log it to Pacer Base too (section 10), so the team can find it without opening the repo.
 
@@ -246,7 +246,9 @@ Quality
 | Each client study (from Phase 1) | that client | `audit` | Logged by the runner itself |
 | Confirmed issues | that client | profile proposal | Known issues, through the approval flow |
 
-- [x] Plan written and logged to Pacer Base, `pacer` space (19 Nov 2026)
+- [x] Plan written and pushed to the repo (19 Nov 2026)
+- [ ] Plan logged to Pacer Base, `pacer` space, as a `doc` (the connector couldn't be reached when the plan was written)
+- [ ] Once this file is merged, re-log it with its link on the main branch (pass the entry id so it updates rather than duplicates)
 
 ---
 
