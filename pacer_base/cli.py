@@ -217,6 +217,18 @@ def cmd_setup(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_brain(args: argparse.Namespace) -> int:
+    api = _api(args)
+    if args.run or args.picture:
+        print("Ran:", json.dumps(api.ok("POST", "/api/brain/run" + ("?picture=true" if args.picture else ""))))
+    st = api.ok("GET", "/api/brain/status")
+    print(f"Brain: {'on' if st['configured'] and st['enabled'] else 'off'} · model {st['model']}"
+          f" · this month ${st['month_spend_usd']} of ${st['monthly_budget_usd']}")
+    for slug, b in st["clients"].items():
+        print(f"  {slug:<20} waiting {b['waiting_to_connect']:>4} · flags {b['open_flags']:>3} · picture {b['picture_updated'] or 'none yet'}")
+    return 0
+
+
 def cmd_tokens(args: argparse.Namespace) -> int:
     for t in _api(args).ok("GET", "/api/tokens"):
         state = "revoked" if t["revoked_at"] else f"last used {t['last_used_at'] or 'never'}"
@@ -282,6 +294,10 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(fn=cmd_add_token)
 
     api_parser("tokens", "List tokens (admin)").set_defaults(fn=cmd_tokens)
+    s = api_parser("brain", "Pacer Base's own analysis: spend, backlog, pictures (admin)")
+    s.add_argument("--run", action="store_true", help="Run one pass now (connect waiting entries)")
+    s.add_argument("--picture", action="store_true", help="Run one pass and rebuild every picture now")
+    s.set_defaults(fn=cmd_brain)
     s = api_parser("revoke-token", "Revoke a token (admin)")
     s.add_argument("id", type=int)
     s.set_defaults(fn=cmd_revoke_token)

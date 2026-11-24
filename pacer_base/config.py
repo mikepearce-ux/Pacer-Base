@@ -22,6 +22,9 @@ class Settings:
     # Attention Lab (heat maps), for the /heatmap/mcp connector.
     attention_lab_url: str = ""
     attention_lab_token: str = ""
+    # Pacer Base's own analysis (the brain). Off without a key.
+    anthropic_api_key: str = ""
+    brain_model: str = "claude-opus-5-5"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -38,4 +41,6 @@ class Settings:
             public_url=os.environ.get("PACER_BASE_PUBLIC_URL", ""),
             attention_lab_url=os.environ.get("ATTENTION_LAB_URL", ""),
             attention_lab_token=os.environ.get("ATTENTION_LAB_TOKEN", ""),
+            anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
+            brain_model=os.environ.get("PACER_BASE_BRAIN_MODEL", "claude-opus-5-5"),
         )

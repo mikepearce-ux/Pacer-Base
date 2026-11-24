@@ -37,6 +37,15 @@ carry one client's details into another client's entries or answers.
 
 Anything under **Waiting for approval** is unconfirmed: mention it as "suggested, not yet approved".
 
+### What Pacer Base has pieced together
+
+Pacer Base runs its own analysis on everything logged (Claude, inside the service):
+- **The picture** at the top of `get_client_context`: where things stand, what's working, threads to watch, risks and contradictions, competitors, opportunities, and questions to raise with the client. Rebuilt every night from the previous picture plus what's new, so it builds up over time.
+- **Open flags**: contradictions between sources, risks, opportunities and loose ends (a promise with no follow-up).
+- **Connected entries** in `get_entry`: the other entries it relates to and why (same test, result of, follows up, contradicts, competitor move).
+
+Start from these for call prep and "what's going on with X": they're the fastest way to the whole story. They're analysis, not approved fact: check the entries they cite before quoting a figure, and say "Pacer Base's read is..." when you pass one on.
+
 ## 2. Log what's created, happens or is decided
 
 Call `log_entry` when, for a client, you:

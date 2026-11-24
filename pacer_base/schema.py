@@ -79,6 +79,21 @@ CONTROL_MIGRATIONS: list[str] = [
         revoked_at  timestamptz
     );
     """,
+    # brain: what Pacer Base's own analysis costs
+    """
+    CREATE TABLE brain_usage (
+        id                 bigserial PRIMARY KEY,
+        at                 timestamptz NOT NULL DEFAULT now(),
+        client             text NOT NULL DEFAULT '',
+        task               text NOT NULL,
+        model              text NOT NULL,
+        input_tokens       integer NOT NULL DEFAULT 0,
+        output_tokens      integer NOT NULL DEFAULT 0,
+        cache_read_tokens  integer NOT NULL DEFAULT 0,
+        cost_usd           numeric(12, 6) NOT NULL DEFAULT 0
+    );
+    CREATE INDEX brain_usage_at_idx ON brain_usage (at);
+    """,
 ]
 
 CLIENT_MIGRATIONS: list[str] = [
@@ -200,5 +215,40 @@ CLIENT_MIGRATIONS: list[str] = [
     );
     CREATE INDEX proposals_status_idx ON proposals (status, section);
     CREATE INDEX proposals_source_keys_idx ON proposals USING gin (source_keys);
+    """,
+    # 3: the brain: connections between entries, flags and the running picture
+    """
+    ALTER TABLE entries ADD COLUMN brain_at timestamptz;
+    ALTER TABLE entries ADD COLUMN brain_hash text;
+
+    CREATE TABLE entry_links (
+        from_id     bigint NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+        to_id       bigint NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+        relation    text NOT NULL,
+        reason      text NOT NULL DEFAULT '',
+        confidence  real NOT NULL DEFAULT 0,
+        created_at  timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (from_id, to_id),
+        CHECK (from_id <> to_id)
+    );
+    CREATE INDEX entry_links_to_idx ON entry_links (to_id);
+
+    CREATE TABLE brain_flags (
+        id            bigserial PRIMARY KEY,
+        kind          text NOT NULL,
+        text          text NOT NULL,
+        entry_ids     bigint[] NOT NULL DEFAULT '{}',
+        source_entry  bigint REFERENCES entries(id) ON DELETE CASCADE,
+        created_at    timestamptz NOT NULL DEFAULT now(),
+        resolved_at   timestamptz
+    );
+
+    CREATE TABLE brain_notes (
+        key           text PRIMARY KEY,
+        content       text NOT NULL,
+        model         text NOT NULL DEFAULT '',
+        entries_seen  bigint NOT NULL DEFAULT 0,
+        updated_at    timestamptz NOT NULL DEFAULT now()
+    );
     """,
 ]

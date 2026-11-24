@@ -39,7 +39,15 @@ def entry_line(e: dict, summary_chars: int = LIST_SUMMARY_CHARS, snippet: bool =
     return "\n".join(lines)
 
 
-def entry_full(client: dict, e: dict) -> str:
+PICTURE_CHARS = 7000
+
+
+def _clip_picture(text: str) -> str:
+    text = (text or "").strip()
+    return text if len(text) <= PICTURE_CHARS else text[:PICTURE_CHARS] + "\n\n_…cut short here._"
+
+
+def entry_full(client: dict, e: dict, links: list[dict] | None = None) -> str:
     out = [f"# {e['title']}", ""]
     meta = [
         f"Client: {client['name']} ({client['slug']})",
@@ -61,8 +69,18 @@ def entry_full(client: dict, e: dict) -> str:
         out += ["", "## Summary", e["summary"].strip()]
     if e.get("body"):
         out += ["", "## Detail", e["body"].strip()]
-    if e.get("metadata"):
-        out += ["", "## Metadata"] + [f"- {k}: {v}" for k, v in e["metadata"].items()]
+    meta_items = {k: v for k, v in (e.get("metadata") or {}).items() if k != "brain_entities"}
+    if meta_items:
+        out += ["", "## Metadata"] + [f"- {k}: {v}" for k, v in meta_items.items()]
+    ents = (e.get("metadata") or {}).get("brain_entities") or {}
+    named = [f"{k}: {', '.join(v)}" for k, v in ents.items() if v]
+    if named:
+        out += ["", "## Mentions (Pacer Base's own reading)"] + [f"- {n}" for n in named]
+    if links:
+        out += ["", "## Connected entries (Pacer Base's own analysis)"] + [
+            f"- [#{l['id']}] {l['title']} ({l['kind']}, {_date(l['occurred_at'])}): {l['relation'].replace('_', ' ')}. {l['reason']}"
+            for l in links
+        ]
     return "\n".join(out)
 
 
@@ -142,6 +160,8 @@ def client_context(
     stats: dict,
     sources: list[dict] | None = None,
     pending: list[dict] | None = None,
+    picture: dict | None = None,
+    flags: list[dict] | None = None,
 ) -> str:
     counts = ", ".join(f"{n} {k}" for k, n in stats["by_kind"].items()) or "none yet"
     header = [
@@ -161,6 +181,19 @@ def client_context(
             "",
             "## Waiting for approval (unconfirmed: don't treat as fact yet)",
             *[proposal_line(p) for p in pending],
+        ]
+    if picture:
+        header += [
+            "",
+            f"## What Pacer Base has pieced together (its own analysis, updated {_date(picture['updated_at'])})",
+            "_Built by Pacer Base from everything logged. Check anything you rely on against the entries it cites._",
+            "",
+            _clip_picture(picture["content"]),
+        ]
+    if flags:
+        header += ["", "## Open flags (Pacer Base's own analysis)"] + [
+            f"- {f['kind']}: {f['text']}" + (f" ({', '.join('#' + str(i) for i in f['entry_ids'])})" if f["entry_ids"] else "")
+            for f in flags
         ]
     header += [
         "",

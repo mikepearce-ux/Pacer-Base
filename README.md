@@ -43,6 +43,16 @@ Clients: Stripe & Stare, The Body Shop, Universal Works, Living Planet (incl. Pl
 
 Re-running anything is safe: an entry with the same source + id, or the same link and kind, is updated rather than duplicated. A thing logged from two places stays one entry: when the portal or Attention Lab logs a link that was already logged from Slack, it takes over that entry; when someone logs a link that a system already owns, the system's summary is kept and their related links and tags are added.
 
+## Pacer Base's own analysis (the brain)
+
+With `ANTHROPIC_API_KEY` set, the service runs Claude itself (`pacer_base/brain.py`, model `claude-opus-5-5`, change with `PACER_BASE_BRAIN_MODEL`) in the background:
+
+- **Connect:** every new or changed entry (title, summary or detail changed) is read against up to 30 related existing entries. It gets links with a relation and reason, cleaned tags, the people, tests, products and competitors it mentions, and flags for contradictions, risks, opportunities and loose ends. Low effort, structured output.
+- **Picture:** once a client's entries are all connected, and every night between 2am and 6am UK, it rewrites that client's picture from the previous one plus what's new: where things stand, what's working, threads to watch, risks and contradictions, competitors, opportunities, questions for the client. High effort.
+- Shown in `get_client_context` (picture and open flags) and `get_entry` (connected entries, mentions), always labelled as Pacer Base's own analysis. It never changes the profile; that still goes through approval.
+- **Spend** is metered per call in `brain_usage` and stops at `brain_monthly_budget_usd` (setting, default 150). `brain_enabled` (setting) turns it off. `pacer-base brain` shows spend, backlog and picture dates; `pacer-base brain --run` / `--picture` runs a pass now.
+- Requests use the server-side refusal fallback, a cached system prompt, and treat all entry text as data.
+
 ## How Claude uses it
 
 `get_client_context` returns the profile, what's waiting for approval, Where to look, and recent activity. Every item carries its links. Pacer Base is the map; the systems hold the detail. So when something looks relevant, Claude follows the links with the matching connector (the Monday item, the Slack thread, the live test) before answering, and says where each fact came from and how old it is.

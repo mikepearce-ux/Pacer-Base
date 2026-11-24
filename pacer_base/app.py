@@ -15,7 +15,7 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from . import __version__, oauth, render, store
+from . import __version__, brain as brain_mod, oauth, render, store
 from .auth import Authenticator, MCPAuth, MCPRouter, Principal, bearer
 from .config import Settings
 from .db import Database
@@ -36,7 +36,7 @@ from .models import (
 log = logging.getLogger("pacer_base")
 
 
-def create_app(settings: Settings | None = None, attention_lab_transport=None) -> FastAPI:
+def create_app(settings: Settings | None = None, attention_lab_transport=None, brain_client=None) -> FastAPI:
     settings = settings or Settings.from_env()
     if not settings.admin_token:
         log.warning("PACER_BASE_ADMIN_TOKEN is not set: no one can create clients or tokens.")
@@ -53,15 +53,21 @@ def create_app(settings: Settings | None = None, attention_lab_transport=None) -
         streamable_http_path="/heatmap/mcp", stateless_http=True, json_response=True, host="0.0.0.0"
     )
 
+    brain = brain_mod.Brain(db, settings, brain_client)
+
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await db.open()
+        if brain_client is None:  # tests drive the brain by hand
+            brain.start()
         async with mcp.session_manager.run(), heatmap.session_manager.run():
             yield
+        await brain.stop()
         await db.close()
 
     app = FastAPI(title="Pacer Base", version=__version__, lifespan=lifespan, docs_url="/api/docs", redoc_url=None, openapi_url="/api/openapi.json")
     app.state.db = db
+    app.state.brain = brain
     app.state.auth = authenticator
     app.state.public_url = settings.public_url
 
@@ -318,6 +324,36 @@ def create_app(settings: Settings | None = None, attention_lab_transport=None) -
             raise HTTPException(404, str(exc)) from exc
 
     # -- agency-wide settings -----------------------------------------------
+    # -- the brain (Pacer Base's own analysis) ------------------------------
+    @app.get("/api/brain/status")
+    async def brain_status(_: Admin) -> dict:
+        settings_ = await store.get_settings(db)
+        backlog = {}
+        for c in await store.list_clients(db):
+            async with db.client(c["db_name"]) as conn:
+                pending = await brain.pending_entries(conn, 1000)
+                picture = await brain_mod.get_picture(conn)
+                flags = await brain_mod.open_flags(conn, limit=1000)
+            backlog[c["slug"]] = {
+                "waiting_to_connect": len(pending),
+                "picture_updated": picture["updated_at"].isoformat() if picture else None,
+                "open_flags": len(flags),
+            }
+        return {
+            "configured": brain.configured,
+            "enabled": settings_.get("brain_enabled", True),
+            "model": brain.model,
+            "month_spend_usd": round(await brain.month_spend(), 2),
+            "monthly_budget_usd": settings_.get("brain_monthly_budget_usd"),
+            "clients": backlog,
+        }
+
+    @app.post("/api/brain/run")
+    async def brain_run(_: Admin, picture: bool = False) -> dict:
+        if not brain.configured:
+            raise HTTPException(409, "The brain isn't configured: set ANTHROPIC_API_KEY on the service.")
+        return await brain.tick(force_picture=picture)
+
     @app.get("/api/settings")
     async def get_settings_(_: Reader) -> dict:
         return await store.get_settings(db)

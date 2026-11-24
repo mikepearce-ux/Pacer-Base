@@ -11,7 +11,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 from pydantic import Field, ValidationError
 
-from . import render, store
+from . import brain, render, store
 from .auth import PRINCIPAL_KEY, Principal
 from .db import Database
 from .models import KINDS, PROFILE_SECTIONS, DecisionIn, EntryIn, Kind, ProfileSection, ProposalIn, RelatedLink, System
@@ -48,6 +48,12 @@ internal skills and schedules), how-tos, and agency-wide decisions. Use it for
 work that isn't about one client. A client's tech set-up (platform, theme and
 repo, apps and integrations, environments, who owns what, how to get access,
 never passwords) goes in its profile's Systems section.
+Pacer Base also reasons for itself: it connects each new entry to related ones (shown
+under "Connected entries" in get_entry), raises flags (contradictions, risks,
+opportunities, loose ends) and keeps a running "picture" of each client, shown at the
+top of get_client_context. Use them to see the whole story quickly, but treat them as
+analysis: check the entries they cite before relying on a point.
+
 Competitors: each client's profile has a Competitors section (who they are, positioning,
 price points, strengths) and its Where to look lists them (system `competitor`). Log what a
 competitor does (a promotion, price change, launch, site or email change, ad or social
@@ -167,7 +173,9 @@ def build_mcp(db: Database) -> MCPServer:
             stats = await store.stats(conn)
             sources = await store.list_sources(conn)
             pending = await store.list_proposals(conn, "pending")
-        return render.client_context(c, profile, entries, stats, sources, pending)
+            picture = await brain.get_picture(conn)
+            flags = await brain.open_flags(conn, limit=8)
+        return render.client_context(c, profile, entries, stats, sources, pending, picture, flags)
 
     @mcp.tool(annotations=READ, structured_output=False)
     async def search_client_context(
@@ -238,14 +246,16 @@ def build_mcp(db: Database) -> MCPServer:
         entry_id: Annotated[int, Field(description="The #id shown next to an entry")],
         ctx: Context,
     ) -> str:
-        """The full text of one entry: summary, detail, links to follow, who logged it and when."""
+        """The full text of one entry: summary, detail, links to follow, who logged it and when,
+        and the other entries Pacer Base has connected it to (and why)."""
         _, c = await client_for(ctx, client)
         try:
             async with db.client(c["db_name"]) as conn:
                 row = await store.get_entry(conn, entry_id)
+                links = await brain.connections(conn, entry_id)
         except store.NotFound as exc:
             raise ToolError(f"{exc} in {c['name']}") from exc
-        return render.entry_full(c, row)
+        return render.entry_full(c, row, links)
 
     # -- writing entries --------------------------------------------------
     @mcp.tool(annotations=WRITE, structured_output=False)

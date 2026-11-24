@@ -283,6 +283,8 @@ SETTING_TYPES: dict[str, Any] = {
     "agency_channels": list[ChannelRef],
     "daily_entry_cap": int,
     "proposal_expiry_days": int,
+    "brain_enabled": bool,
+    "brain_monthly_budget_usd": float,
 }
 SETTING_DEFAULTS: dict[str, Any] = {
     "approvers": [],
@@ -290,6 +292,8 @@ SETTING_DEFAULTS: dict[str, Any] = {
     "agency_channels": [],
     "daily_entry_cap": 50,
     "proposal_expiry_days": 7,
+    "brain_enabled": True,
+    "brain_monthly_budget_usd": 150.0,
 }
 
 
