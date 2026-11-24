@@ -42,6 +42,7 @@ TICK_SECONDS = 300
 ENTRIES_PER_TICK = 8           # per client, newest first
 CANDIDATES = 30                # existing entries shown when connecting one
 MIN_CONFIDENCE = 0.6
+FLAG_DAYS = 21                 # flags lapse unless raised again
 PICTURE_HOURS = range(2, 6)    # rebuild pictures between 2am and 6am UK
 PICTURE_MAX_CHARS = 9000
 
@@ -77,7 +78,8 @@ client. Work out how the new entry connects to what's already known:
   campaign, a product line, a competitor). Not generic words.
 - entities: the people, tests, products/pages and competitors it mentions, as
   written.
-- flags: only when there's something to act on: a contradiction with an
+- flags: only when there's something to act on and it isn't already in
+  <flags_already_raised>: a contradiction with an
   existing entry (say which), a risk, an opportunity, or a loose end (a promise
   or action with no follow-up). Each in one plain sentence. Usually none.
 
@@ -302,10 +304,13 @@ class Brain:
         ]
         if e.get("body"):
             new.append(f"Detail: {_clip(e['body'], 4000)}")
+        raised = [f for f in await open_flags(conn, limit=25) if f.get("source_entry") != e["id"]]
         prompt = (
             f"Client: {client['name']}\n\n<new_entry>\n" + "\n".join(new) + "\n</new_entry>\n\n"
             "<existing_entries>\n" + ("\n\n".join(_entry_brief(c) for c in candidates) or "none yet")
-            + "\n</existing_entries>"
+            + "\n</existing_entries>\n\n<flags_already_raised>\n"
+            + ("\n".join(f"- {f['kind']}: {f['text']}" for f in raised) or "none")
+            + "\n</flags_already_raised>\nDon't raise a flag that repeats one already raised."
         )
         text = await self._ask(client["slug"], "connect", CONNECT_SYSTEM, prompt,
                                effort="low", max_tokens=4000, schema=CONNECT_SCHEMA)
@@ -397,6 +402,10 @@ class Brain:
             if not await self.can_spend():
                 break
             async with self.db.client(c["db_name"]) as conn:
+                await conn.execute(
+                    "UPDATE brain_flags SET resolved_at = now() WHERE resolved_at IS NULL"
+                    " AND created_at < now() - interval '%s days'" % FLAG_DAYS
+                )
                 for e in await self.pending_entries(conn, ENTRIES_PER_TICK):
                     if not await self.can_spend():
                         break
@@ -447,16 +456,17 @@ async def get_picture(conn) -> dict | None:
 
 async def open_flags(conn, limit: int = 10) -> list[dict]:
     return await (await conn.execute(
-        "SELECT id, kind, text, entry_ids, created_at FROM brain_flags WHERE resolved_at IS NULL"
+        "SELECT id, kind, text, entry_ids, source_entry, created_at FROM brain_flags WHERE resolved_at IS NULL"
         " ORDER BY created_at DESC LIMIT %s", (limit,),
     )).fetchall()
 
 
 async def connections(conn, entry_id: int) -> list[dict]:
     return await (await conn.execute(
-        "SELECT l.relation, l.reason, l.confidence, e.id, e.title, e.kind, e.occurred_at"
+        "SELECT * FROM (SELECT DISTINCT ON (e.id) l.relation, l.reason, l.confidence, e.id, e.title, e.kind, e.occurred_at"
         " FROM entry_links l JOIN entries e ON e.id = CASE WHEN l.from_id = %s THEN l.to_id ELSE l.from_id END"
         " WHERE (l.from_id = %s OR l.to_id = %s) AND e.archived_at IS NULL"
-        " ORDER BY l.confidence DESC, e.occurred_at DESC LIMIT 15",
-        (entry_id, entry_id, entry_id),
+        " ORDER BY e.id, (l.from_id = %s) DESC, l.confidence DESC) x"
+        " ORDER BY confidence DESC, occurred_at DESC LIMIT 15",
+        (entry_id, entry_id, entry_id, entry_id),
     )).fetchall()

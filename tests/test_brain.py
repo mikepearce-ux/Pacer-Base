@@ -117,6 +117,7 @@ def test_connector_shows_picture_flags_and_connections(brain_api):
     assert "Test results due before Black Friday." in ctx
     # A link made from #2 to #1 shows on #1 too.
     assert f"[#{b['id']}] Weekly call 10 Nov" in entry and "same test" in entry
+    assert entry.count(f"[#{b['id']}]") == 1  # a link made from both sides shows once
 
 
 def test_reconnects_only_when_content_changes(brain_api):
