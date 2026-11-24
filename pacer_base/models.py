@@ -18,8 +18,9 @@ KINDS: dict[str, str] = {
     "doc": "Any other document worth finding again (strategy, brief, spec)",
     "decision": "A decision and why it was made",
     "note": "Anything else worth remembering",
+    "competitor": "Something a competitor did: a promotion, price change, launch, site change, email or ad/social campaign, with a 'so what' for the client",
 }
-Kind = Literal["call", "test", "report", "audit", "proposal", "doc", "decision", "note"]
+Kind = Literal["call", "test", "report", "audit", "proposal", "doc", "decision", "note", "competitor"]
 
 # The client profile ("brief"), in display order.
 PROFILE_SECTIONS: dict[str, str] = {
@@ -31,10 +32,11 @@ PROFILE_SECTIONS: dict[str, str] = {
     "issues": "Known issues",
     "promises": "What we've promised",
     "systems": "Systems",
+    "competitors": "Competitors",
     "links": "Key links",
 }
 ProfileSection = Literal[
-    "overview", "people", "goals", "current_tests", "numbers", "issues", "promises", "systems", "links"
+    "overview", "people", "goals", "current_tests", "numbers", "issues", "promises", "systems", "competitors", "links"
 ]
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
@@ -91,9 +93,10 @@ SYSTEMS: dict[str, str] = {
     "airtable": "Airtable base (ref: base id)",
     "shopify": "Shopify store (ref: myshopify domain)",
     "ga4": "GA4 property (ref: property id)",
+    "competitor": "A competitor to watch (ref: its website domain; url, socials and ad library links in notes)",
     "other": "Anything else (ref: a url or name)",
 }
-System = Literal["slack", "granola", "drive", "monday", "intelligems", "airtable", "shopify", "ga4", "other"]
+System = Literal["slack", "granola", "drive", "monday", "intelligems", "airtable", "shopify", "ga4", "competitor", "other"]
 
 
 class RelatedLink(BaseModel):

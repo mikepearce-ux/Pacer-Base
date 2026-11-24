@@ -49,7 +49,7 @@ Re-running anything is safe: an entry with the same source + id, or the same lin
 
 ## What's stored
 
-**Profile sections:** `overview`, `people`, `goals`, `current_tests`, `numbers`, `issues`, `promises`, `systems`, `links`. `systems` is the client's tech set-up: platform and stores, theme and where its code lives, apps and integrations, environments, who owns what at Pacer and the client, and how to get access (never passwords or keys). Old text is kept in history when a section changes.
+**Profile sections:** `overview`, `people`, `goals`, `current_tests`, `numbers`, `issues`, `promises`, `systems`, `competitors`, `links`. `systems` is the client's tech set-up: platform and stores, theme and where its code lives, apps and integrations, environments, who owns what at Pacer and the client, and how to get access (never passwords or keys). Old text is kept in history when a section changes.
 
 **Who logged it:** each entry and proposal records its author: the key's label, or `<name> (via <key>)` when Claude passes the person's name with `logged_by`, so cards made through the shared team key still say who they came from. The daily cap counts per author.
 
@@ -65,8 +65,9 @@ Re-running anything is safe: an entry with the same source + id, or the same lin
 | `doc` | Any other document worth finding again |
 | `decision` | A decision and why it was made |
 | `note` | Anything else (e.g. a day's Slack summary) |
+| `competitor` | Something a competitor did (promotion, price change, launch, site or email change, ad or social campaign), with a "so what" for the client |
 
-**Sources** (per client, admin-only): `slack`, `granola`, `drive`, `monday`, `intelligems`, `airtable`, `shopify`, `ga4`, `other`, each with its id, name, link and role (e.g. "shared with client").
+**Sources** (per client, admin-only): `slack`, `granola`, `drive`, `monday`, `intelligems`, `airtable`, `shopify`, `ga4`, `competitor`, `other`, each with its id, name, link and role (e.g. "shared with client").
 
 **Settings** (agency-wide, admin-only): `approvers` (name and Slack user id), `review_channel`, `agency_channels`, `daily_entry_cap` (default 50), `proposal_expiry_days` (default 7).
 

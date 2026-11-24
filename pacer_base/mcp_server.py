@@ -48,6 +48,11 @@ internal skills and schedules), how-tos, and agency-wide decisions. Use it for
 work that isn't about one client. A client's tech set-up (platform, theme and
 repo, apps and integrations, environments, who owns what, how to get access,
 never passwords) goes in its profile's Systems section.
+Competitors: each client's profile has a Competitors section (who they are, positioning,
+price points, strengths) and its Where to look lists them (system `competitor`). Log what a
+competitor does (a promotion, price change, launch, site or email change, ad or social
+campaign) as kind `competitor`, tagged with the competitor's name, with the link and a
+"so what" for the client.
 
 Profile changes need one of the configured approvers: use propose_profile_change,
 which queues the change for review. Only approve-level tokens can call

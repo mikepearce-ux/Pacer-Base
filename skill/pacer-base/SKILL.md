@@ -54,6 +54,8 @@ Who logs what, by role (all of it goes to the client it's about):
 - **Design** (briefs, Figma files, design reviews): `doc` with the Figma or Drive link.
 - **CRO** (audits, tests, results): `audit`, `test` or `report`.
 
+**Competitors:** each client's profile has a **Competitors** section, and the competitors are in its Where to look. When you see a competitor do something (a promotion or sale, a price change, a launch, a homepage or landing page change, an email, an ad or social campaign), log it as kind `competitor`, tagged with the competitor's name (e.g. `lush`), with the link (or Meta Ad Library / Creative Center link), the date it started, and one line on **what it means for the client** (e.g. "Lush 30% off from today; TBS's sale starts Friday"). "What are <client>'s competitors doing?" means: read the Competitors section and recent `competitor` cards, then check the competitors' sites for anything newer.
+
 Work that isn't about one client (Pacer's own tools such as Pacer Base, the results portal and Attention Lab, internal skills and schedules, how-tos, agency-wide decisions) goes in the internal space **`pacer`** (Pacer, internal).
 
 What a good entry has:
