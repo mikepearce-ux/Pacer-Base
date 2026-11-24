@@ -1,11 +1,11 @@
 ---
 name: pacer-base-routines
-description: Run or schedule Pacer Base's routines - the evening round-up (read each client's Slack, meetings, Drive, Monday and Intelligems and log summaries to Pacer Base), the morning approvals (apply profile changes approvers ✅'d in #pacer-base-review) and the personal weekly ("log my client work"). Use when someone asks to "run the Pacer Base round-up", "catch up Pacer Base", "sync <client> to Pacer Base", "check the Pacer Base approvals", "log my client work this week", or to set up or change a Pacer Base schedule.
+description: Run or schedule Pacer Base's routines - the competitor sweep (log competitors' emails, offers and site changes for each client), the evening round-up (read each client's Slack, meetings, Drive, Monday and Intelligems and log summaries to Pacer Base), the morning approvals (apply profile changes approvers ✅'d in #pacer-base-review) and the personal weekly ("log my client work"). Use when someone asks to "run the Pacer Base round-up", "catch up Pacer Base", "sync <client> to Pacer Base", "check the Pacer Base approvals", "log my client work this week", "what are the competitors doing / sweep the competitors", or to set up or change a Pacer Base schedule.
 ---
 
 # Pacer Base routines
 
-Three routines keep Pacer Base current. Each one is a full set of instructions in
+Four routines keep Pacer Base current. Each one is a full set of instructions in
 this skill's `references/` folder: read the matching file and follow it exactly.
 They use the **Pacer Base** connector plus the connectors named in each file. The morning approvals need an approver's own **Pacer Base approver** connector, because the shared one can't approve.
 
@@ -14,6 +14,7 @@ They use the **Pacer Base** connector plus the connectors named in each file. Th
 | Evening round-up | `references/evening-roundup.md` | One agency-wide schedule (Mike's) | Weekdays 5:36pm UK |
 | Morning approvals | `references/morning-approvals.md` | One agency-wide schedule (Mike's); needs approve access | Weekdays 7:34am UK |
 | Personal weekly | `references/personal-weekly.md` | Everyone, for their own work | Fridays |
+| Competitor sweep | `references/competitor-sweep.md` | One agency-wide schedule (Mike's); reads the Competitors labels in Mike's Gmail | Weekdays 8:43am UK |
 
 ## Running one now
 
@@ -23,6 +24,7 @@ They use the **Pacer Base** connector plus the connectors named in each file. Th
 - "Check the Pacer Base approvals" → `references/morning-approvals.md`. If `decide_proposal`
   says your key doesn't have approve access, stop and say only an approver's Base can apply them.
 - "Log my client work" → `references/personal-weekly.md`.
+- "Sweep the competitors" or "what are <client>'s competitors doing this week?" → `references/competitor-sweep.md` (for that client only, if one is named). The emails are in Mike's Gmail, so for anyone else it covers the competitors' sites only.
 
 Before a round-up, check the connectors it needs are on (Slack, Granola, Google Drive,
 monday.com, Intelligems and Pacer Base). If one is missing, say which, run the rest, and don't mark
